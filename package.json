@@ -1,0 +1,45 @@
+{
+  "name": "@bidster/flash-cache",
+  "version": "1.0.0-rc.1",
+  "description": "Ultra-fast two-level cache (L1/L2) with stale-while-revalidate mechanism for Node.js",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    }
+  },
+  "main": "./dist/cjs/index.cjs",
+  "module": "./dist/esm/index.js",
+  "types": "./dist/esm/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "yarn clean && yarn build:esm && yarn build:cjs",
+    "build:esm": "tsc --project tsconfig.esm.json",
+    "build:cjs": "tsc --project tsconfig.cjs.json",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "cache",
+    "flash-cache",
+    "bidster",
+    "stale-while-revalidate",
+    "nodejs",
+    "redis"
+  ],
+  "author": "Bidster Team <tech@bidster.net>",
+  "license": "MIT",
+  "peerDependencies": {
+    "ioredis": "^5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.1",
+    "ioredis": "^5.8.1",
+    "typescript": "^5.9.3"
+  }
+}

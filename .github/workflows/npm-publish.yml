@@ -1,0 +1,58 @@
+name: 📦 Publish to npm
+
+on:
+  release:
+    types: [created]
+  # Можно также включить ручной запуск:
+  workflow_dispatch:
+
+jobs:
+  publish:
+    name: Publish Package
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org/
+          scope: 'public'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build package
+        run: yarn build
+
+      - name: Determine npm tag
+        id: npm_tag
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Detected version: $VERSION"
+          
+          if [[ "$VERSION" == *"-beta"* ]]; then
+            TAG="beta"
+          elif [[ "$VERSION" == *"-rc"* ]]; then
+            TAG="rc"
+          elif [[ "$VERSION" == *"-next"* ]]; then
+            TAG="next"
+          elif [[ "$VERSION" == *"-canary"* ]]; then
+            TAG="canary"
+          else
+            TAG="latest"
+          fi
+          
+          echo "Publishing with tag: $TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: Publish to npm
+        run: |
+          yarn publish --non-interactive --access public --tag ${{ steps.npm_tag.outputs.tag }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
