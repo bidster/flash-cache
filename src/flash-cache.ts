@@ -103,7 +103,6 @@ export class FlashCache<T = any> {
 
         const prefix = prefixes.join(':');
 
-        console.log(prefixes, prefix)
         // Precompute functions for performance
         this.makePrefixedKey = (key: string) => prefix + key;
 

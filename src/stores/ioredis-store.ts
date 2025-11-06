@@ -27,7 +27,7 @@ export class IORedisStore<T = any> implements MayBeAsyncStore<T> {
       key,
       this.serialize(value),
       'PXAT',
-      value.expAt + 100000,
+      value.expAt,
     );
   }
 
