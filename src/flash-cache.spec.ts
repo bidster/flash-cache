@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module';
+import path from 'node:path';
+
 /**
  * Тесты для FlashCache без моков: только управление временем.
  * ВАЖНО: включаем fake timers ДО импорта модуля, иначе now = Date.now зафиксируется на реальном времени.
@@ -7,6 +10,17 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
     const BASE = new Date('2024-01-01T00:00:00.000Z');
     const advanceTo = (msFromBase: number) =>
       jest.setSystemTime(new Date(BASE.getTime() + msFromBase));
+
+    const createDeferred = <T>() => {
+        let resolve!: (value: T) => void;
+        let reject!: (reason?: unknown) => void;
+        const promise = new Promise<T>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+
+        return { promise, resolve, reject };
+    };
 
     beforeAll(() => {
         jest.useFakeTimers();          // включаем подмену времени
@@ -129,5 +143,92 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         jest.setSystemTime(new Date(e!.expAt + 1));
         r = await cache.get('x');
         expect(r.state).toBe('expired');
+    });
+
+    it('returns stale value from L1 immediately without waiting for L2', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore }   = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<any>();
+        const l2Read = createDeferred<any>();
+        let l2GetCalls = 0;
+
+        const l2 = {
+            get: jest.fn(() => {
+                l2GetCalls += 1;
+                return l2Read.promise;
+            }),
+            set: jest.fn(async () => undefined),
+            delete: jest.fn(async () => undefined),
+        };
+
+        const cache = new FlashCache<any>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        await cache.set('k', 'A');
+
+        advanceTo(4_001);
+
+        const result = cache.get('k');
+
+        expect(l2GetCalls).toBe(1);
+
+        l2Read.resolve({
+            value: 'B',
+            time: BASE.getTime(),
+            staleAt: BASE.getTime() + 9_000,
+            expAt: BASE.getTime() + 10_000,
+        });
+
+        await Promise.resolve();
+
+        expect(result).not.toBeInstanceOf(Promise);
+        expect(result).toEqual({ value: 'A', state: 'stale' });
+    });
+
+    it('propagates L2 read errors when the response depends on L2', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore }   = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<any>();
+        const l2Failure = new Error('redis unavailable');
+        const l2 = {
+            get: jest.fn(async () => {
+                throw l2Failure;
+            }),
+            set: jest.fn(async () => undefined),
+            delete: jest.fn(async () => undefined),
+        };
+
+        const cache = new FlashCache<any>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        await Promise.resolve(cache.get('k')).then(
+            () => {
+                throw new Error('expected L2 error to be propagated');
+            },
+            (error) => {
+                expect(error).toBe(l2Failure);
+            },
+        );
+    });
+
+    it('package main entry can be required via the package root', () => {
+        const packageJsonPath = path.resolve(__dirname, '../package.json');
+        const requireFromPackage = createRequire(packageJsonPath);
+
+        expect(() => {
+            requireFromPackage('.');
+        }).not.toThrow();
     });
 });

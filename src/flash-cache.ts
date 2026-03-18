@@ -125,29 +125,44 @@ export class FlashCache<T = any> {
                     // не устарел
                     return {value: l1.value, state: 'fresh'};
                 }
+
+                this.refreshFromL2(prefixedKey);
+                return {value: l1.value, state: 'stale'};
             }
         }
 
         return singleFlight(prefixedKey, () => this.getThroughL2(prefixedKey)).then(
-          (res) => {
-              return {value: res.value, state: mapStateToStr[res.state]};
+          (entry) => {
+              if (!entry) {
+                  return {value: undefined, state: 'miss'};
+              }
+
+              const state = this.computeState(entry);
+              if (state === S.FRESH) {
+                  this.primary.set(prefixedKey, entry);
+              }
+
+              return {value: entry.value, state: mapStateToStr[state]};
           },
         );
     }
 
-    private async getThroughL2(prefixedKey: string) {
-        const l2 = await this.secondary
-          .get(prefixedKey)
-          .catch<undefined>(() => undefined);
+    private refreshFromL2(prefixedKey: string): void {
+        void singleFlight(prefixedKey, async () => {
+            const entry = await this.getThroughL2(prefixedKey);
 
-        if (l2) {
-            const state = this.computeState(l2);
-            if (state === S.FRESH) {
-                this.primary.set(prefixedKey, l2);
+            if (entry && this.computeState(entry) === S.FRESH) {
+                this.primary.set(prefixedKey, entry);
             }
-            return {value: l2.value, state};
-        }
-        return {value: undefined, state: S.MISS};
+
+            return entry;
+        }).catch(() => undefined);
+    }
+
+    private async getThroughL2(prefixedKey: string) {
+        const l2 = await this.secondary.get(prefixedKey);
+
+        return l2;
     }
 
     async set(key: string, value: T, customTtl?: number): Promise<void> {
