@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
  * Тесты для FlashCache без моков: только управление временем.
@@ -7,9 +9,10 @@ import path from 'node:path';
  */
 
 describe('FlashCache (time-driven tests, no mocks)', () => {
+    const currentDir = path.dirname(fileURLToPath(import.meta.url));
     const BASE = new Date('2024-01-01T00:00:00.000Z');
     const advanceTo = (msFromBase: number) =>
-      jest.setSystemTime(new Date(BASE.getTime() + msFromBase));
+      vi.setSystemTime(new Date(BASE.getTime() + msFromBase));
 
     const createDeferred = <T>() => {
         let resolve!: (value: T) => void;
@@ -23,12 +26,12 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
     };
 
     beforeAll(() => {
-        jest.useFakeTimers();          // включаем подмену времени
-        jest.setSystemTime(BASE);      // фиксируем начальную «эпоху»
+        vi.useFakeTimers();          // включаем подмену времени
+        vi.setSystemTime(BASE);      // фиксируем начальную «эпоху»
     });
 
     afterAll(() => {
-        jest.useRealTimers();
+        vi.useRealTimers();
     });
 
     it('basic lifecycle: miss → fresh → stale → expired → miss (after del)', async () => {
@@ -135,12 +138,12 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(e!.expAt).toBe(start + customTtl);
 
         // На границе stale: двигаем точно к staleAt → должно быть stale
-        jest.setSystemTime(new Date(e!.staleAt));
+        vi.setSystemTime(new Date(e!.staleAt));
         let r = await cache.get('x');
         expect(r.state).toBe('stale');
 
         // Чуть после expAt → expired
-        jest.setSystemTime(new Date(e!.expAt + 1));
+        vi.setSystemTime(new Date(e!.expAt + 1));
         r = await cache.get('x');
         expect(r.state).toBe('expired');
     });
@@ -156,12 +159,12 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         let l2GetCalls = 0;
 
         const l2 = {
-            get: jest.fn(() => {
+            get: vi.fn(() => {
                 l2GetCalls += 1;
                 return l2Read.promise;
             }),
-            set: jest.fn(async () => undefined),
-            delete: jest.fn(async () => undefined),
+            set: vi.fn(async () => undefined),
+            delete: vi.fn(async () => undefined),
         };
 
         const cache = new FlashCache<any>(l1, l2, {
@@ -200,11 +203,11 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         const l1 = new MapStore<any>();
         const l2Failure = new Error('redis unavailable');
         const l2 = {
-            get: jest.fn(async () => {
+            get: vi.fn(async () => {
                 throw l2Failure;
             }),
-            set: jest.fn(async () => undefined),
-            delete: jest.fn(async () => undefined),
+            set: vi.fn(async () => undefined),
+            delete: vi.fn(async () => undefined),
         };
 
         const cache = new FlashCache<any>(l1, l2, {
@@ -224,7 +227,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
     });
 
     it('package main entry can be required via the package root', () => {
-        const packageJsonPath = path.resolve(__dirname, '../package.json');
+        const packageJsonPath = path.resolve(currentDir, '../package.json');
         const requireFromPackage = createRequire(packageJsonPath);
 
         expect(() => {
