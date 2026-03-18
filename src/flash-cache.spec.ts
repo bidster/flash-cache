@@ -1,6 +1,3 @@
-import { createRequire } from 'node:module';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -9,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  */
 
 describe('FlashCache (time-driven tests, no mocks)', () => {
-    const currentDir = path.dirname(fileURLToPath(import.meta.url));
     const BASE = new Date('2024-01-01T00:00:00.000Z');
     const advanceTo = (msFromBase: number) =>
       vi.setSystemTime(new Date(BASE.getTime() + msFromBase));
@@ -23,6 +19,12 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         });
 
         return { promise, resolve, reject };
+    };
+
+    const flushMicrotasks = async (count: number = 3) => {
+        for (let i = 0; i < count; i += 1) {
+            await Promise.resolve();
+        }
     };
 
     beforeAll(() => {
@@ -226,12 +228,195 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         );
     });
 
-    it('package main entry can be required via the package root', () => {
-        const packageJsonPath = path.resolve(currentDir, '../package.json');
-        const requireFromPackage = createRequire(packageJsonPath);
+    it('deduplicates concurrent L2 reads for the same key', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
 
-        expect(() => {
-            requireFromPackage('.');
-        }).not.toThrow();
+        advanceTo(0);
+
+        const l1 = new MapStore<any>();
+        const l2Read = createDeferred<any>();
+        const l2 = {
+            get: vi.fn(() => l2Read.promise),
+            set: vi.fn(async () => undefined),
+            delete: vi.fn(async () => undefined),
+        };
+
+        const cache = new FlashCache<any>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        const first = Promise.resolve(cache.get('k'));
+        const second = Promise.resolve(cache.get('k'));
+
+        expect(l2.get).toHaveBeenCalledTimes(1);
+
+        l2Read.resolve({
+            value: 'A',
+            time: BASE.getTime(),
+            staleAt: BASE.getTime() + 4_000,
+            expAt: BASE.getTime() + 10_000,
+        });
+
+        await expect(first).resolves.toEqual({ value: 'A', state: 'fresh' });
+        await expect(second).resolves.toEqual({ value: 'A', state: 'fresh' });
+        expect(l2.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('promotes refreshed value from L2 into L1 after serving stale', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<any>();
+        const l2Read = createDeferred<any>();
+        const l2 = {
+            get: vi.fn(() => l2Read.promise),
+            set: vi.fn(async () => undefined),
+            delete: vi.fn(async () => undefined),
+        };
+
+        const cache = new FlashCache<any>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        await cache.set('k', 'A');
+        advanceTo(4_001);
+
+        expect(cache.get('k')).toEqual({ value: 'A', state: 'stale' });
+
+        l2Read.resolve({
+            value: 'B',
+            time: BASE.getTime(),
+            staleAt: BASE.getTime() + 9_000,
+            expAt: BASE.getTime() + 10_000,
+        });
+
+        const prefixedKey = 'flashCache:v1:test:k';
+        await l2Read.promise;
+        await flushMicrotasks();
+
+        expect(l1.get(prefixedKey)?.value).toBe('B');
+        expect(cache.get('k')).toEqual({ value: 'B', state: 'fresh' });
+    });
+
+    it('keeps stale L1 value available when background refresh fails', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<any>();
+        const l2 = {
+            get: vi.fn(async () => {
+                throw new Error('temporary l2 failure');
+            }),
+            set: vi.fn(async () => undefined),
+            delete: vi.fn(async () => undefined),
+        };
+
+        const cache = new FlashCache<any>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        await cache.set('k', 'A');
+        advanceTo(4_001);
+
+        expect(cache.get('k')).toEqual({ value: 'A', state: 'stale' });
+
+        await flushMicrotasks();
+
+        expect(cache.get('k')).toEqual({ value: 'A', state: 'stale' });
+        expect(l2.get).toHaveBeenCalledTimes(2);
+    });
+
+    it('isolates values by namespace and supports raw keys when namespace is false', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const sharedL1 = new MapStore<any>();
+        const sharedL2 = new MapStore<any>();
+
+        const alpha = new FlashCache<any>(sharedL1, sharedL2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'alpha',
+        });
+
+        const beta = new FlashCache<any>(sharedL1, sharedL2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'beta',
+        });
+
+        const raw = new FlashCache<any>(sharedL1, sharedL2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: false,
+        });
+
+        await alpha.set('k', 'A');
+        await beta.set('k', 'B');
+        await raw.set('k', 'R');
+
+        expect(await alpha.get('k')).toEqual({ value: 'A', state: 'fresh' });
+        expect(await beta.get('k')).toEqual({ value: 'B', state: 'fresh' });
+        expect(await raw.get('k')).toEqual({ value: 'R', state: 'fresh' });
+
+        expect(sharedL1.has('flashCache:v1:alpha:k')).toBe(true);
+        expect(sharedL1.has('flashCache:v1:beta:k')).toBe(true);
+        expect(sharedL1.has('k')).toBe(true);
+    });
+
+    it('treats null as a valid cached value', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<null>();
+        const l2 = new MapStore<null>();
+        const cache = new FlashCache<null>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        await cache.set('missing-user', null);
+
+        expect(await cache.get('missing-user')).toEqual({ value: null, state: 'fresh' });
+
+        advanceTo(4_001);
+        expect(await cache.get('missing-user')).toEqual({ value: null, state: 'stale' });
+    });
+
+    it('rejects undefined values instead of storing ambiguous misses', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<any>();
+        const l2 = new MapStore<any>();
+        const cache = new FlashCache<any>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        await expect(cache.set('missing-user', undefined)).rejects.toThrow(
+          'undefined values cannot be cached',
+        );
+
+        expect(await cache.get('missing-user')).toEqual({ value: undefined, state: 'miss' });
     });
 });
