@@ -9,6 +9,7 @@ export interface StoreValue<T> {
 }
 
 export type MayBePromise<T> = T | Promise<T>;
+export type CacheableValue<T> = Exclude<T, undefined>;
 
 export interface Store<T = any> {
     get(key: string): StoreValue<T> | undefined;
@@ -66,7 +67,7 @@ export class FlashCache<T = any> {
     protected readonly makePrefixedKey: (key: string) => string;
 
     private computeState = (e: StoreValue<T>) => {
-        if (!e || e.value === undefined || e.value === null) return S.MISS;
+        if (!e || e.value === undefined) return S.MISS;
         const n = now();
         if (e.expAt <= n) return S.EXPIRED;
         if (e.staleAt <= n) return S.STALE;
@@ -165,7 +166,11 @@ export class FlashCache<T = any> {
         return l2;
     }
 
-    async set(key: string, value: T, customTtl?: number): Promise<void> {
+    async set(key: string, value: CacheableValue<T>, customTtl?: number): Promise<void> {
+        if (value === undefined) {
+            throw new Error('undefined values cannot be cached');
+        }
+
         const prefixedKey = this.makePrefixedKey(key);
         const ttl = customTtl ?? this.ttl;
         const n = now();
