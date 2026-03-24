@@ -1,7 +1,7 @@
-export const singleFlight = (() => {
+export function createSingleFlight() {
   const inflight = new Map<string | number, Promise<any>>();
 
-  return function <T>(key: string | number, fn: () => Promise<T>): Promise<T> {
+  return function singleFlight<T>(key: string | number, fn: () => Promise<T>): Promise<T> {
     const ex = inflight.get(key);
     if (ex) return ex as Promise<T>;
 
@@ -11,4 +11,6 @@ export const singleFlight = (() => {
       if (inflight.get(key) === p) inflight.delete(key);
     }) as Promise<T>;
   };
-})();
+}
+
+export const singleFlight = createSingleFlight();

@@ -6,6 +6,8 @@ Two-level cache for Node.js with:
 - `L2` async persistence
 - strict `ttl` expiry
 - stale reads from `L1` with background refresh from `L2`
+- request deduplication for concurrent `L2` reads
+- memoized cache fill via `FlashMemo`
 - optional Redis-backed `L2`
 
 ## Installation
@@ -22,7 +24,7 @@ yarn add @bidster/flash-cache ioredis
 
 ```typescript
 import Redis from 'ioredis';
-import { FlashCache, IORedisStore, MapStore } from '@bidster/flash-cache';
+import { FlashCache, FlashMemo, IORedisStore, MapStore } from '@bidster/flash-cache';
 
 const redis = new Redis();
 
@@ -35,6 +37,7 @@ const cache = new FlashCache(
     namespace: 'users',
   },
 );
+const memo = new FlashMemo(cache);
 
 await cache.set('42', { name: 'Igor' });
 
@@ -49,6 +52,11 @@ if (result.state === 'stale') {
 }
 
 console.log(result.value);
+
+const user = await memo.memoize(
+  '42',
+  () => fetchUserFromApi('42'),
+);
 ```
 
 ## Semantics
@@ -71,6 +79,11 @@ Then:
 - first `4s`: `get()` returns `{ state: 'fresh' }`
 - next `6s`: `get()` returns `{ state: 'stale' }` from `L1` and triggers background refresh from `L2`
 - after `10s`: stale value is no longer trusted; the cache reports `expired` or `miss` depending on `L2`
+
+`cache.get()` has two execution modes:
+
+- synchronous return for `L1` hits (`fresh` or `stale`)
+- `Promise` return when it has to consult `L2`
 
 ## API
 
@@ -110,7 +123,7 @@ Stores a value in both `L1` and `L2`.
 
 TypeScript also rejects `undefined` at compile time for `set()`.
 
-### `await cache.get(key)`
+### `cache.get(key)`
 
 Returns:
 
@@ -118,6 +131,38 @@ Returns:
 - `stale` when `L1` entry is stale but still within `ttl`
 - `expired` when `L2` still has the entry but it is already past `ttl`
 - `miss` when the key is absent
+
+`get()` returns the result directly for `L1` hits and a `Promise` when it needs `L2`.
+
+Concurrent `L2` lookups for the same key are deduplicated with single-flight semantics.
+
+### `new FlashMemo(cache)`
+
+Memoized cache-fill helper on top of `FlashCache`.
+
+### `memo.memoize(key, loader, options?)`
+
+Loads a value on `miss` or `expired`, stores it in the cache, and returns it.
+
+- `fresh` returns the cached value immediately and does not call `loader`
+- `stale` returns the stale value immediately and refreshes in background
+- `miss` and `expired` call `loader`, store the result, and return it
+- concurrent `memoize()` calls for the same key are deduplicated
+- `loader` must not return `undefined`
+
+```typescript
+memo.memoize('user:42', () => fetchUser(), {
+  customTtl: 30_000,
+});
+```
+
+Options:
+
+```typescript
+{
+  customTtl?: number;
+}
+```
 
 ### `await cache.del(key)`
 
@@ -134,6 +179,12 @@ Simple in-memory store based on `Map`. Useful as `L1`, and also for tests.
 Redis-backed `L2` store built on top of `ioredis`.
 
 It stores serialized `StoreValue<T>` objects and relies on Redis `PXAT` to expire them at `expAt`.
+
+## Utilities
+
+### `jitter(ttl, percent?)`
+
+Returns a randomized TTL shortened by up to `percent` (default `0.1`). Useful when you want to reduce synchronized expiry bursts before calling `set()`.
 
 ## Namespacing
 
@@ -166,6 +217,7 @@ yarn bench:check
 - `yarn test:types` checks compile-time contracts
 - `yarn test:integration` runs Redis integration tests via Testcontainers and Docker
 - `yarn bench` runs local `tinybench` scenarios for hot `get()` and `memo()` paths on `MapStore`
+- benchmark scenarios currently cover fresh/stale `get()` and fresh/stale/miss `memoize()` flows without Redis
 - `yarn bench:baseline` saves the current benchmark summary as the local baseline
 - `yarn bench:check` reruns benchmarks and fails if throughput regresses beyond the configured threshold
 
@@ -173,7 +225,6 @@ Benchmark notes:
 
 - benchmark results are intended for local comparison, not as CI pass/fail thresholds
 - compare runs on the same machine and Node.js version
-- current scenarios cover fresh/stale `get()` and fresh/stale/miss `memo()` flows without Redis
 - local regression checks compare against `bench/flash-cache.baseline.json`
 - local checks gate on throughput, while latency stays in the report for diagnosis
 - default regression threshold is `15%`; override it with `FLASH_CACHE_BENCH_THRESHOLD=0.1 yarn bench:check`

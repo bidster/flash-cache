@@ -4,6 +4,7 @@ import process from 'node:process';
 import { Bench } from 'tinybench';
 
 import { FlashCache } from '../dist/esm/flash-cache.js';
+import { FlashMemo } from '../dist/esm/flash-memo.js';
 import { MapStore } from '../dist/esm/stores/map-store.js';
 
 const namespace = 'bench';
@@ -18,8 +19,9 @@ function createCachePair() {
   const l1 = new MapStore();
   const l2 = new MapStore();
   const cache = new FlashCache(l1, l2, { ttl, staleRatio, namespace });
+  const memo = new FlashMemo(cache);
 
-  return { cache, l1, l2 };
+  return { cache, memo, l1, l2 };
 }
 
 async function drainMicrotasks(count = 4) {
@@ -66,9 +68,9 @@ function createBench() {
   const staleGet = createCachePair();
   const freshMemo = createCachePair();
   const staleMemo = createCachePair();
-  const staleMemoLoader = () => 'fresh-value';
+  const staleMemoLoader = async () => 'fresh-value';
   const missMemo = createCachePair();
-  const missMemoLoader = () => 'loaded-value';
+  const missMemoLoader = async () => 'loaded-value';
 
   const bench = new Bench({
     time: 300,
@@ -92,14 +94,14 @@ function createBench() {
       afterEach: () => drainMicrotasks(),
     })
     .add('memo() fresh entry', () => {
-      freshMemo.cache.memo('fresh-memo', () => 'other-value');
+      freshMemo.memo.memoize('fresh-memo', async () => 'other-value');
     }, {
       beforeEach: async () => {
         await primeFresh(freshMemo.cache, 'fresh-memo', 'value');
       },
     })
-    .add('memo() stale entry with preferStale', () => {
-      staleMemo.cache.memo('stale-memo', staleMemoLoader, { preferStale: true });
+    .add('memo() stale entry', () => {
+      staleMemo.memo.memoize('stale-memo', staleMemoLoader);
     }, {
       beforeEach: () => {
         primeStale(staleMemo, 'stale-memo', 'stale-value', 'fresh-value');
@@ -107,7 +109,7 @@ function createBench() {
       afterEach: () => drainMicrotasks(),
     })
     .add('memo() miss entry', async () => {
-      await missMemo.cache.memo('miss-memo', missMemoLoader);
+      await missMemo.memo.memoize('miss-memo', missMemoLoader);
     }, {
       beforeEach: () => {
         resetMissKey(missMemo, 'miss-memo');

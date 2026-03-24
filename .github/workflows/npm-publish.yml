@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org/
-          scope: 'public'
+          scope: '@bidster'
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile

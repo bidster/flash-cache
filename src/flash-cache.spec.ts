@@ -419,4 +419,161 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
 
         expect(await cache.get('missing-user')).toEqual({ value: undefined, state: 'miss' });
     });
+
+    it('memo fills cache on miss and stores computed value', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache<string>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+        const memo = new FlashMemo(cache);
+
+        const loader = vi.fn(() => 'A');
+        const result = memo.memoize('k', loader);
+
+        expect(result).toBeInstanceOf(Promise);
+        await expect(result).resolves.toBe('A');
+        expect(loader).toHaveBeenCalledTimes(1);
+        expect(await cache.get('k')).toEqual({ value: 'A', state: 'fresh' });
+    });
+
+    it('memo returns fresh value without calling loader', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache<string>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+        const memo = new FlashMemo(cache);
+
+        await cache.set('k', 'A');
+
+        const loader = vi.fn(() => 'B');
+
+        expect(memo.memoize('k', loader)).toBe('A');
+        expect(loader).not.toHaveBeenCalled();
+    });
+
+    it('memo recomputes expired values instead of returning expired payloads', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache<string>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+        const memo = new FlashMemo(cache);
+
+        await cache.set('k', 'A');
+        advanceTo(10_001);
+
+        const loader = vi.fn(() => 'B');
+
+        await expect(memo.memoize('k', loader)).resolves.toBe('B');
+        expect(loader).toHaveBeenCalledTimes(1);
+        expect(await cache.get('k')).toEqual({ value: 'B', state: 'fresh' });
+    });
+
+    it('memo returns stale immediately by default and refreshes in background', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache<string>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+        const memo = new FlashMemo(cache);
+
+        await cache.set('k', 'A');
+        advanceTo(4_001);
+
+        const loader = vi.fn(async () => 'B');
+
+        expect(memo.memoize('k', loader)).toBe('A');
+        expect(loader).toHaveBeenCalledTimes(1);
+
+        await flushMicrotasks();
+
+        expect(await cache.get('k')).toEqual({ value: 'B', state: 'fresh' });
+    });
+
+    it('memo deduplicates concurrent loader calls for the same key', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache<string>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+        const memo = new FlashMemo(cache);
+
+        const loaderRead = createDeferred<string>();
+        const loader = vi.fn(() => loaderRead.promise);
+
+        const first = Promise.resolve(memo.memoize('k', loader));
+        const second = Promise.resolve(memo.memoize('k', loader));
+
+        await flushMicrotasks();
+        expect(loader).toHaveBeenCalledTimes(1);
+
+        loaderRead.resolve('A');
+
+        await expect(first).resolves.toBe('A');
+        await expect(second).resolves.toBe('A');
+        expect(loader).toHaveBeenCalledTimes(1);
+    });
+
+    it('memo rejects when loader returns undefined', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const l1 = new MapStore<any>();
+        const l2 = new MapStore<any>();
+        const cache = new FlashCache<any>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+        const memo = new FlashMemo(cache);
+
+        await expect(memo.memoize('k', () => undefined)).rejects.toThrow(
+          'undefined values cannot be cached',
+        );
+    });
 });
