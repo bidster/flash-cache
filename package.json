@@ -26,6 +26,9 @@
     "build": "yarn clean && yarn build:esm && yarn build:cjs",
     "build:esm": "tsc --project tsconfig.esm.json",
     "build:cjs": "tsc --project tsconfig.cjs.json",
+    "bench": "yarn build:esm && node ./bench/flash-cache.bench.mjs",
+    "bench:baseline": "yarn build:esm && node ./bench/flash-cache.bench.mjs baseline",
+    "bench:check": "yarn build:esm && node ./bench/flash-cache.bench.mjs check",
     "clean": "rm -rf dist",
     "test": "vitest run --exclude \"src/**/*.integration.spec.ts\"",
     "test:integration": "DOCKER_HOST=unix://$HOME/.docker/run/docker.sock vitest run src/stores/ioredis-store.integration.spec.ts",
@@ -48,6 +51,7 @@
     "@types/node": "^24.7.1",
     "ioredis": "^5.8.1",
     "testcontainers": "^11.13.0",
+    "tinybench": "^5.1.0",
     "typescript": "^5.9.3",
     "vite": "^8.0.0",
     "vitest": "^4.1.0"

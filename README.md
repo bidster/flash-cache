@@ -157,8 +157,23 @@ Use `namespace: false` only when you explicitly want to control raw keys yoursel
 yarn test
 yarn test:types
 yarn test:integration
+yarn bench
+yarn bench:baseline
+yarn bench:check
 ```
 
 - `yarn test` runs unit and behavior tests
 - `yarn test:types` checks compile-time contracts
 - `yarn test:integration` runs Redis integration tests via Testcontainers and Docker
+- `yarn bench` runs local `tinybench` scenarios for hot `get()` and `memo()` paths on `MapStore`
+- `yarn bench:baseline` saves the current benchmark summary as the local baseline
+- `yarn bench:check` reruns benchmarks and fails if throughput regresses beyond the configured threshold
+
+Benchmark notes:
+
+- benchmark results are intended for local comparison, not as CI pass/fail thresholds
+- compare runs on the same machine and Node.js version
+- current scenarios cover fresh/stale `get()` and fresh/stale/miss `memo()` flows without Redis
+- local regression checks compare against `bench/flash-cache.baseline.json`
+- local checks gate on throughput, while latency stays in the report for diagnosis
+- default regression threshold is `15%`; override it with `FLASH_CACHE_BENCH_THRESHOLD=0.1 yarn bench:check`
