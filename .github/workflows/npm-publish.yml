@@ -53,6 +53,4 @@ jobs:
 
       - name: Publish to npm
         run: |
-          yarn publish --non-interactive --access public --tag ${{ steps.npm_tag.outputs.tag }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }}
