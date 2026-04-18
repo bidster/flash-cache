@@ -3,6 +3,9 @@ name: 📦 Publish to npm
 on:
   release:
     types: [created]
+  push:
+    branches:
+      - main
   # Можно также включить ручной запуск:
   workflow_dispatch:
 
@@ -21,8 +24,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org/
-          scope: '@bidster'
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
@@ -53,4 +54,4 @@ jobs:
 
       - name: Publish to npm
         run: |
-          npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }}
+          npm publish --provenance --access public --tag ${{ steps.npm_tag.outputs.tag }}
