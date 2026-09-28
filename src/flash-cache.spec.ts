@@ -556,6 +556,38 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(loader).toHaveBeenCalledTimes(1);
     });
 
+    it('serializes on set and restores class instances on get for a shared cache', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+
+        class User {
+            constructor(readonly name: string) {}
+
+            greeting(): string {
+                return `Hello, ${this.name}`;
+            }
+        }
+
+        advanceTo(0);
+
+        const l1 = new MapStore<unknown>();
+        const l2 = new MapStore<{name: string}>();
+        const cache = new FlashCache<unknown, {name: string}>(l1, l2, {
+            ttl: 10_000,
+            staleRatio: 0.4,
+            namespace: 'test',
+        });
+
+        await cache.set('user:42', new User('Igor'), (user) => ({name: user.name}));
+        l1.clear();
+
+        const result = await cache.get('user:42', ({name}) => new User(name));
+
+        expect(result.value).toBeInstanceOf(User);
+        expect((result.value as User).greeting()).toBe('Hello, Igor');
+        expect(l1.get('flashCache:v1:test:user:42')?.value).toBeInstanceOf(User);
+    });
+
     it('memo rejects when loader returns undefined', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { FlashMemo } = await import('./flash-memo');

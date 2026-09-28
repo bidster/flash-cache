@@ -1,12 +1,12 @@
 import Redis from 'ioredis';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { IORedisStore } from './ioredis-store';
+import { IORedisStore, type JsonValue } from './ioredis-store';
 
 describe('IORedisStore integration', () => {
     let container: StartedTestContainer;
     let client: Redis;
-    let store: IORedisStore<{ name: string }>;
+    let store: IORedisStore;
 
     beforeAll(async () => {
         container = await new GenericContainer('redis:7-alpine')
@@ -21,7 +21,7 @@ describe('IORedisStore integration', () => {
             maxRetriesPerRequest: 1,
         });
 
-        store = new IORedisStore<{ name: string }>(client);
+        store = new IORedisStore(client);
     }, 60_000);
 
     afterAll(async () => {

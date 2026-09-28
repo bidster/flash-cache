@@ -10,8 +10,10 @@ export interface StoreValue<T> {
 
 export type MayBePromise<T> = T | Promise<T>;
 export type CacheableValue<T> = Exclude<T, undefined>;
+export type CacheValueSerializer<Value, StoredValue> = (value: Value) => StoredValue;
+export type CacheValueDeserializer<StoredValue, Value> = (value: StoredValue) => Value;
 
-export interface Store<T = any> {
+export interface Store<T = unknown> {
     get(key: string): StoreValue<T> | undefined;
 
     set(key: string, value: StoreValue<T>): any;
@@ -19,13 +21,13 @@ export interface Store<T = any> {
     delete(key: string): any;
 }
 
-export type AsyncStore<T = any> = {
+export type AsyncStore<T = unknown> = {
     get(key: string): Promise<StoreValue<T> | undefined>;
     set(key: string, value: StoreValue<T>): Promise<any>;
     delete(key: string): Promise<any>;
 };
 
-export type MayBeAsyncStore<T = any> = {
+export type MayBeAsyncStore<T = unknown> = {
     get(key: string): MayBePromise<StoreValue<T> | undefined>;
     set(key: string, value: StoreValue<T>): MayBePromise<any>;
     delete(key: string): MayBePromise<any>;
@@ -62,11 +64,11 @@ function toAsyncStore<T>(store: MayBeAsyncStore<T>): AsyncStore<T> {
     };
 }
 
-export class FlashCache<T = any> {
+export class FlashCache<L1Value = unknown, L2Value = L1Value> {
     // Precomputed functions for performance
     protected readonly makePrefixedKey: (key: string) => string;
 
-    private computeState = (e: StoreValue<T>) => {
+    private computeState = <Value>(e: StoreValue<Value>) => {
         if (!e || e.value === undefined) return S.MISS;
         const n = now();
         if (e.expAt <= n) return S.EXPIRED;
@@ -74,15 +76,15 @@ export class FlashCache<T = any> {
         return S.FRESH;
     };
 
-    private readonly primary: Store<T>;
-    private readonly secondary: AsyncStore<T>;
+    private readonly primary: Store<L1Value>;
+    private readonly secondary: AsyncStore<L2Value>;
 
     private readonly staleRatio: number;
     private readonly ttl: number;
 
     constructor(
-      primary: Store<T>,
-      secondary: MayBeAsyncStore<T>,
+      primary: Store<L1Value>,
+      secondary: MayBeAsyncStore<L2Value>,
       private readonly options: MiniCacheOptions,
     ) {
         if (options.ttl <= 0) {
@@ -111,7 +113,15 @@ export class FlashCache<T = any> {
         this.ttl = options.ttl;
     }
 
-    get(key: string): MayBePromise<CacheResult<T>> {
+    get(key: string): MayBePromise<CacheResult<L1Value | L2Value>>;
+    get<Value>(
+      key: string,
+      deserialize: CacheValueDeserializer<L2Value, Value>,
+    ): MayBePromise<CacheResult<Value>>;
+    get<Value>(
+      key: string,
+      deserialize?: CacheValueDeserializer<L2Value, Value>,
+    ): MayBePromise<CacheResult<L1Value | L2Value | Value>> {
         const prefixedKey = this.makePrefixedKey(key);
 
         const l1 = this.primary.get(prefixedKey);
@@ -127,7 +137,7 @@ export class FlashCache<T = any> {
                     return {value: l1.value, state: 'fresh'};
                 }
 
-                this.refreshFromL2(prefixedKey);
+                this.refreshFromL2(prefixedKey, deserialize);
                 return {value: l1.value, state: 'stale'};
             }
         }
@@ -139,49 +149,80 @@ export class FlashCache<T = any> {
               }
 
               const state = this.computeState(entry);
+              const value = deserialize ? deserialize(entry.value) : entry.value;
               if (state === S.FRESH) {
-                  this.primary.set(prefixedKey, entry);
+                  this.primary.set(prefixedKey, {...entry, value: value as L1Value});
               }
 
-              return {value: entry.value, state: mapStateToStr[state]};
+              return {value, state: mapStateToStr[state]};
           },
         );
     }
 
-    private refreshFromL2(prefixedKey: string): void {
+    private refreshFromL2<Value>(
+      prefixedKey: string,
+      deserialize?: CacheValueDeserializer<L2Value, Value>,
+    ): void {
         void singleFlight(prefixedKey, async () => {
             const entry = await this.getThroughL2(prefixedKey);
 
             if (entry && this.computeState(entry) === S.FRESH) {
-                this.primary.set(prefixedKey, entry);
+                const value = deserialize ? deserialize(entry.value) : entry.value;
+                this.primary.set(prefixedKey, {...entry, value: value as L1Value});
             }
 
             return entry;
         }).catch(() => undefined);
     }
 
-    private async getThroughL2(prefixedKey: string) {
-        const l2 = await this.secondary.get(prefixedKey);
-
-        return l2;
+    private async getThroughL2(prefixedKey: string): Promise<StoreValue<L2Value> | undefined> {
+        return this.secondary.get(prefixedKey);
     }
 
-    async set(key: string, value: CacheableValue<T>, customTtl?: number): Promise<void> {
+    set(
+      key: string,
+      value: CacheableValue<L1Value & L2Value>,
+      customTtl?: number,
+    ): Promise<void>;
+    set<Value extends L1Value>(
+      key: string,
+      value: CacheableValue<Value>,
+      serialize: CacheValueSerializer<Value, L2Value>,
+    ): Promise<void>;
+    set<Value extends L1Value>(
+      key: string,
+      value: CacheableValue<Value>,
+      customTtl: number | undefined,
+      serialize: CacheValueSerializer<Value, L2Value>,
+    ): Promise<void>;
+    async set<Value extends L1Value>(
+      key: string,
+      value: CacheableValue<Value>,
+      customTtlOrSerialize?: number | CacheValueSerializer<Value, L2Value>,
+      serialize?: CacheValueSerializer<Value, L2Value>,
+    ): Promise<void> {
         if (value === undefined) {
             throw new Error('undefined values cannot be cached');
         }
 
         const prefixedKey = this.makePrefixedKey(key);
+        const customTtl = typeof customTtlOrSerialize === 'number' ? customTtlOrSerialize : undefined;
+        const serializeValue = typeof customTtlOrSerialize === 'function'
+          ? customTtlOrSerialize
+          : serialize;
         const ttl = customTtl ?? this.ttl;
         const n = now();
-        const entry: StoreValue<T> = {
+        const entry: StoreValue<Value> = {
             value,
             time: now(),
             staleAt: n + ttl * this.staleRatio,
             expAt: n + ttl,
         };
-        this.primary.set(prefixedKey, entry);
-        await this.secondary.set(prefixedKey, entry);
+        this.primary.set(prefixedKey, entry as StoreValue<L1Value>);
+        await this.secondary.set(prefixedKey, {
+            ...entry,
+            value: serializeValue ? serializeValue(value) : value as L2Value,
+        });
     }
 
     async del(key: string): Promise<void> {
