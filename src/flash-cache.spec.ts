@@ -275,6 +275,25 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             : { value: undefined, state: 'miss' });
     });
 
+    it.each([false, true])('set copies the entry only with a serializer (serialize=%s)', async (serialized) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        const serialize = vi.fn((value: string) => value.toUpperCase());
+        if (serialized) await cache.set('k', 'value', serialize);
+        else await cache.set('k', 'value');
+
+        expect(l1.get('k')?.value).toBe('value');
+        expect(l2.get('k')?.value).toBe(serialized ? 'VALUE' : 'value');
+        expect(serialize).toHaveBeenCalledTimes(serialized ? 1 : 0);
+        if (serialized) expect(l2.get('k')).not.toBe(l1.get('k'));
+        else expect(l2.get('k')).toBe(l1.get('k'));
+        expect(l2.get('k')).toEqual({ ...l1.get('k'), value: serialized ? 'VALUE' : 'value' });
+    });
+
     it('set publishes to L1 only after L2 succeeds, preserving original timestamps', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');

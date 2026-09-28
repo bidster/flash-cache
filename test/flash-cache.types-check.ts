@@ -20,6 +20,13 @@ const stringCache = new FlashCache<string>(
 
 const stringMemo = new FlashMemo(stringCache);
 
+void Promise.resolve(stringCache.get('n', Number)).then((result) => {
+    const value: string | number | undefined = result.value;
+    // @ts-expect-error an L1 hit can return a string without deserialization
+    const numberOnly: number | undefined = result.value;
+    if (typeof value === 'number') value.toFixed();
+});
+
 void stringCache.set('name', 'alice');
 void stringCache.set('name', 'alice', (value) => value.toUpperCase());
 void stringMemo.memoize('name', () => 'alice', {customTtl: 1_000});
@@ -99,6 +106,22 @@ const sharedCache = new FlashCache<unknown, JsonValue>(
 
 void sharedCache.set('user', new User('alice'), serializeUser);
 void sharedCache.get('user', deserializeUser);
+
+void Promise.resolve(sharedCache.get('user', deserializeUser)).then((result) => {
+    // @ts-expect-error the value in a shared L1 remains unknown
+    const user: User | undefined = result.value;
+});
+
+const userCache = new FlashCache<User, JsonValue>(
+    new MapStore<User>(),
+    jsonRedisStore,
+    {ttl: 10_000, staleRatio: 0.4, namespace: 'types'},
+);
+
+void Promise.resolve(userCache.get('user', deserializeUser)).then((result) => {
+    const user: User | undefined = result.value;
+    user?.greeting();
+});
 
 const sharedMemo = new FlashMemo(sharedCache);
 const userMemoOptions: SerializedMemoizeOptions<User, JsonValue> = {

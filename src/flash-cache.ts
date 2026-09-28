@@ -121,7 +121,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
     get<Value>(
       key: string,
       deserialize: CacheValueDeserializer<L2Value, Value>,
-    ): MayBePromise<CacheResult<Value>>;
+    ): MayBePromise<CacheResult<L1Value | Value>>;
     get<Value>(
       key: string,
       deserialize?: CacheValueDeserializer<L2Value, Value>,
@@ -218,10 +218,10 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
             staleAt: n + ttl * this.staleRatio,
             expAt: n + ttl,
         };
-        await this.secondary.set(prefixedKey, {
+        await this.secondary.set(prefixedKey, serialize ? {
             ...entry,
-            value: serialize ? serialize(value) : value as L2Value,
-        });
+            value: serialize(value),
+        } : entry as StoreValue<L1Value & L2Value>);
         this.primary.set(prefixedKey, entry as StoreValue<L1Value>);
     }
 
