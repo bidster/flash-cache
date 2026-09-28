@@ -132,6 +132,10 @@ type CacheResult<T> = {
 
 Stores a value in both `L1` and `L2`.
 
+The value is serialized, if a serializer is provided, and written to `L2` first. `L1` is updated only after the `L2` write succeeds. If serialization or the `L2` write fails, `set()` rejects without updating `L1` through that call. If the subsequent `L1` write fails, `set()` rejects and the successful `L2` write is not rolled back. The operation is not atomic across the two stores.
+
+While the `L2` write is pending, readers may continue to receive the previous value from `L1`. Concurrent operations can still change either store; see [Concurrent operations](#concurrent-operations).
+
 - `customTtl` overrides the default `ttl` for this entry
 - `undefined` is not allowed and throws
 - `null` is allowed and can be used for negative caching

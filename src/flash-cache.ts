@@ -219,11 +219,11 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
             staleAt: n + ttl * this.staleRatio,
             expAt: n + ttl,
         };
-        this.primary.set(prefixedKey, entry as StoreValue<L1Value>);
         await this.secondary.set(prefixedKey, {
             ...entry,
             value: serializeValue ? serializeValue(value) : value as L2Value,
         });
+        this.primary.set(prefixedKey, entry as StoreValue<L1Value>);
     }
 
     async del(key: string): Promise<void> {

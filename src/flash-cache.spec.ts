@@ -114,6 +114,94 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(l1Entry?.value).toEqual({ name: 'Igor' });
     });
 
+    it.each(
+        ['serialize', 'l2-throw', 'l2-reject'].flatMap((failureAt) => [
+            { failureAt, existing: false },
+            { failureAt, existing: true },
+        ]),
+    )('set preserves L1 on failure (at=$failureAt, existing=$existing)', async ({ failureAt, existing }) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const l1 = new MapStore<string>();
+        const storage = new MapStore<string>();
+        const l2 = {
+            get: (key: string) => storage.get(key),
+            set: vi.fn(async (key: string, entry: import('./flash-cache').StoreValue<string>) => { storage.set(key, entry); }),
+            delete: (key: string) => storage.delete(key),
+        };
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        if (existing) await cache.set('k', 'old');
+        const beforeL1 = l1.get('k');
+        const beforeL2 = storage.get('k');
+        l2.set.mockClear();
+        const failure = new Error('write failed');
+        if (failureAt === 'serialize') {
+            await expect(cache.set('k', 'new', () => { throw failure; })).rejects.toBe(failure);
+            expect(l2.set).not.toHaveBeenCalled();
+        } else {
+            if (failureAt === 'l2-throw') l2.set.mockImplementationOnce(() => { throw failure; });
+            else l2.set.mockRejectedValueOnce(failure);
+            await expect(cache.set('k', 'new')).rejects.toBe(failure);
+            expect(l2.set).toHaveBeenCalledTimes(1);
+        }
+        expect(l1.get('k')).toBe(beforeL1);
+        expect(storage.get('k')).toBe(beforeL2);
+        expect(await cache.get('k')).toEqual(existing
+            ? { value: 'old', state: 'fresh' }
+            : { value: undefined, state: 'miss' });
+    });
+
+    it('set publishes to L1 only after L2 succeeds, preserving original timestamps', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const l1 = new MapStore<string>();
+        const storage = new MapStore<string>();
+        const pending = createDeferred<void>();
+        const l2 = {
+            get: (key: string) => storage.get(key),
+            set: vi.fn(async (key: string, entry: import('./flash-cache').StoreValue<string>) => { storage.set(key, entry); }),
+            delete: (key: string) => storage.delete(key),
+        };
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        await cache.set('k', 'old');
+        l2.set.mockImplementationOnce(async (key, entry) => {
+            await pending.promise;
+            storage.set(key, entry);
+        });
+        const serialize = vi.fn((value: string) => value.toUpperCase());
+        const write = cache.set('k', 'new', 5_000, serialize);
+        expect(serialize).toHaveBeenCalledExactlyOnceWith('new');
+        expect(cache.get('k')).toEqual({ value: 'old', state: 'fresh' });
+        expect(storage.get('k')?.value).toBe('old');
+        advanceTo(1_000);
+        pending.resolve();
+        await write;
+        expect(cache.get('k')).toEqual({ value: 'new', state: 'fresh' });
+        expect(l1.get('k')).toEqual({
+            value: 'new', time: BASE.getTime(),
+            staleAt: BASE.getTime() + 2_000, expAt: BASE.getTime() + 5_000,
+        });
+        expect(storage.get('k')).toEqual({ ...l1.get('k'), value: 'NEW' });
+    });
+
+    it('set propagates L1 failure after L2 has already been updated', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        await cache.set('k', 'old');
+        const failure = new Error('L1 write failed');
+        const set = vi.spyOn(l1, 'set').mockImplementationOnce(() => { throw failure; });
+        await expect(cache.set('k', 'new')).rejects.toBe(failure);
+        expect(l2.get('k')?.value).toBe('new');
+        expect(l1.get('k')?.value).toBe('old');
+        set.mockRestore();
+    });
+
     it('custom TTL affects staleAt/expAt correctly', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore }   = await import('./stores/map-store');
