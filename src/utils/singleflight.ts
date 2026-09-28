@@ -12,5 +12,3 @@ export function createSingleFlight() {
     }) as Promise<T>;
   };
 }
-
-export const singleFlight = createSingleFlight();

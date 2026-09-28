@@ -1,5 +1,4 @@
-import {singleFlight} from './utils/singleflight';
-import {MapStore} from "./stores/map-store";
+import { createSingleFlight } from './utils/singleflight';
 
 export interface StoreValue<T> {
     value: T;
@@ -65,6 +64,8 @@ function toAsyncStore<T>(store: MayBeAsyncStore<T>): AsyncStore<T> {
 }
 
 export class FlashCache<L1Value = unknown, L2Value = L1Value> {
+    private readonly readFlight = createSingleFlight();
+
     // Precomputed functions for performance
     protected readonly makePrefixedKey: (key: string) => string;
 
@@ -142,7 +143,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
             }
         }
 
-        return singleFlight(prefixedKey, () => this.getThroughL2(prefixedKey)).then(
+        return this.readFlight(prefixedKey, () => this.getThroughL2(prefixedKey)).then(
           (entry) => {
               if (!entry) {
                   return {value: undefined, state: 'miss'};
@@ -163,7 +164,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
       prefixedKey: string,
       deserialize?: CacheValueDeserializer<L2Value, Value>,
     ): void {
-        void singleFlight(prefixedKey, async () => {
+        void this.readFlight(prefixedKey, async () => {
             const entry = await this.getThroughL2(prefixedKey);
 
             if (entry && this.computeState(entry) === S.FRESH) {

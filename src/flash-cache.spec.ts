@@ -265,6 +265,67 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(l2.get).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+        { sharedL2: false, stale: false },
+        { sharedL2: true, stale: false },
+        { sharedL2: false, stale: true },
+        { sharedL2: true, stale: true },
+    ])('isolates instance reads (sharedL2=$sharedL2, stale=$stale)', async ({ sharedL2, stale }) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+
+        advanceTo(0);
+
+        const entryA = {
+            value: 'A',
+            time: BASE.getTime(),
+            staleAt: BASE.getTime() + 9_000,
+            expAt: BASE.getTime() + 10_000,
+        };
+        const entryB = { ...entryA, value: 'B' };
+        const l2A = {
+            get: vi.fn(async () => entryA),
+            set: vi.fn(async () => undefined),
+            delete: vi.fn(async () => undefined),
+        };
+        const l2B = sharedL2 ? l2A : {
+            ...l2A,
+            get: vi.fn(async () => entryB),
+        };
+        const options = { ttl: 10_000, staleRatio: 0.4, namespace: 'instance-isolation' };
+        const cacheA = new FlashCache(new MapStore<string>(), l2A, options);
+        const cacheB = new FlashCache(new MapStore<string>(), l2B, options);
+
+        if (stale) {
+            await cacheA.set('k', 'old-A');
+            await cacheB.set('k', 'old-B');
+            advanceTo(4_001);
+        }
+
+        const firstA = cacheA.get('k');
+        const secondA = cacheA.get('k');
+        const firstB = cacheB.get('k');
+        const secondB = cacheB.get('k');
+
+        const results = await Promise.all([firstA, secondA, firstB, secondB]);
+        await flushMicrotasks(5);
+
+        expect(l2A.get).toHaveBeenCalledTimes(sharedL2 ? 2 : 1);
+        expect(l2B.get).toHaveBeenCalledTimes(sharedL2 ? 2 : 1);
+        const expectedA = { value: stale ? 'old-A' : 'A', state: stale ? 'stale' : 'fresh' };
+        const expectedB = { value: stale ? 'old-B' : sharedL2 ? 'A' : 'B', state: stale ? 'stale' : 'fresh' };
+        expect(results).toEqual([expectedA, expectedA, expectedB, expectedB]);
+        if (stale) {
+            expect(firstA).not.toBeInstanceOf(Promise);
+            expect(firstB).not.toBeInstanceOf(Promise);
+        }
+
+        expect(cacheA.get('k')).toEqual({ value: 'A', state: 'fresh' });
+        expect(cacheB.get('k')).toEqual({ value: sharedL2 ? 'A' : 'B', state: 'fresh' });
+        expect(l2A.get).toHaveBeenCalledTimes(sharedL2 ? 2 : 1);
+        expect(l2B.get).toHaveBeenCalledTimes(sharedL2 ? 2 : 1);
+    });
+
     it('promotes refreshed value from L2 into L1 after serving stale', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
