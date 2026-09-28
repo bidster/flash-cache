@@ -326,6 +326,94 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(l2B.get).toHaveBeenCalledTimes(sharedL2 ? 2 : 1);
     });
 
+    it.each([
+        { operation: 'set', stale: false },
+        { operation: 'del', stale: false },
+        { operation: 'set', stale: true },
+        { operation: 'del', stale: true },
+    ])('allows an older read to refill L1 after $operation without extending TTL (stale=$stale)', async ({ operation, stale }) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const oldEntry = { value: 'old', time: BASE.getTime(), staleAt: BASE.getTime() + 9_000, expAt: BASE.getTime() + 10_000 };
+        const pending = createDeferred<typeof oldEntry>();
+        const l1 = new MapStore<string>();
+        const l2 = { get: () => pending.promise, set: async () => undefined, delete: async () => undefined };
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        if (stale) {
+            await cache.set('k', 'stale');
+            advanceTo(4_001);
+        }
+        const first = cache.get('k');
+        const second = cache.get('k');
+        if (operation === 'set') await cache.set('k', 'new');
+        else await cache.del('k');
+        pending.resolve(oldEntry);
+        const expected = { value: stale ? 'stale' : 'old', state: stale ? 'stale' : 'fresh' };
+        expect(await first).toEqual(expected);
+        expect(await second).toEqual(expected);
+        await flushMicrotasks(10);
+        expect(l1.get('k')).toEqual(oldEntry);
+        expect(cache.get('k')).toEqual({ value: 'old', state: 'fresh' });
+        advanceTo(10_001);
+        expect(await cache.get('k')).toEqual({ value: 'old', state: 'expired' });
+    });
+
+    it.each(['set', 'del'])('keeps the pending L2 read shared across %s', async (operation) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const oldEntry = { value: 'old', time: BASE.getTime(), staleAt: BASE.getTime() + 9_000, expAt: BASE.getTime() + 10_000 };
+        const pending = createDeferred<typeof oldEntry>();
+        const l1 = new MapStore<string>();
+        const l2 = {
+            get: vi.fn(() => pending.promise),
+            set: async () => undefined,
+            delete: async () => undefined,
+        };
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        const first = cache.get('k');
+        if (operation === 'set') await cache.set('k', 'new');
+        else await cache.del('k');
+        l1.clear(); // Force L2 even after a successful set.
+        const second = cache.get('k');
+        pending.resolve(oldEntry);
+        expect(await first).toEqual({ value: 'old', state: 'fresh' });
+        expect(await second).toEqual({ value: 'old', state: 'fresh' });
+        expect(l2.get).toHaveBeenCalledTimes(1);
+        expect(l1.get('k')).toEqual(oldEntry);
+    });
+
+    it.each(['get', 'set', 'del'])('allows a fresh L2 read after a failed %s', async (operation) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const entry = { value: 'fresh', time: BASE.getTime(), staleAt: BASE.getTime() + 9_000, expAt: BASE.getTime() + 10_000 };
+        const failure = new Error('store unavailable');
+        const l1 = new MapStore<string>();
+        const l2 = {
+            get: vi.fn(async () => entry),
+            set: vi.fn(async () => undefined),
+            delete: vi.fn(async () => undefined),
+        };
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        if (operation === 'get') {
+            l2.get.mockRejectedValueOnce(failure);
+            await expect(cache.get('k')).rejects.toBe(failure);
+        } else if (operation === 'set') {
+            l2.set.mockRejectedValueOnce(failure);
+            await expect(cache.set('k', 'new')).rejects.toBe(failure);
+        } else {
+            l2.delete.mockRejectedValueOnce(failure);
+            await expect(cache.del('k')).rejects.toBe(failure);
+        }
+        l1.clear();
+        expect(await cache.get('k')).toEqual({ value: 'fresh', state: 'fresh' });
+        expect(l1.get('k')).toEqual(entry);
+        expect(cache.get('k')).toEqual({ value: 'fresh', state: 'fresh' });
+        expect(l2.get).toHaveBeenCalledTimes(operation === 'get' ? 2 : 1);
+    });
+
     it('promotes refreshed value from L2 into L1 after serving stale', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
@@ -583,6 +671,78 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         await flushMicrotasks();
 
         expect(await cache.get('k')).toEqual({ value: 'B', state: 'fresh' });
+    });
+
+    it.each(
+        ['fresh', 'stale-l1', 'stale-l2', 'miss', 'expired'].flatMap((state) => [
+            { state, asynchronous: false },
+            { state, asynchronous: true },
+        ]),
+    )('memo handles loader errors consistently (state=$state, async=$asynchronous)', async ({ state, asynchronous }) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        const memo = new FlashMemo(cache);
+        if (state !== 'miss') await cache.set('k', 'old');
+        if (state.startsWith('stale')) advanceTo(4_001);
+        if (state === 'expired') advanceTo(10_001);
+        if (state === 'stale-l2') l1.clear();
+        const beforeL1 = l1.get('k');
+        const beforeL2 = l2.get('k');
+        const failure = new Error('loader failed');
+        const loader = vi.fn(() => {
+            if (asynchronous) return Promise.reject<string>(failure);
+            throw failure;
+        });
+
+        const result = memo.memoize('k', loader);
+        if (state === 'fresh' || state === 'stale-l1') {
+            expect(result).toBe('old');
+        } else {
+            expect(result).toBeInstanceOf(Promise);
+            if (state === 'stale-l2') await expect(result).resolves.toBe('old');
+            else await expect(result).rejects.toBe(failure);
+        }
+        await flushMicrotasks(10);
+        expect(loader).toHaveBeenCalledTimes(state === 'fresh' ? 0 : 1);
+        expect(l1.get('k')).toBe(beforeL1);
+        expect(l2.get('k')).toBe(beforeL2);
+        if (state === 'fresh') return;
+
+        const retry = vi.fn(() => 'new');
+        expect(await memo.memoize('k', retry)).toBe(state.startsWith('stale') ? 'old' : 'new');
+        await flushMicrotasks(10);
+        expect(retry).toHaveBeenCalledTimes(1);
+        expect(cache.get('k')).toEqual({ value: 'new', state: 'fresh' });
+    });
+
+    it.each([false, true])('memo deduplicates failing background loaders (async=%s)', async (asynchronous) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const cache = new FlashCache(new MapStore<string>(), new MapStore<string>(), {
+            ttl: 10_000, staleRatio: 0.4, namespace: false,
+        });
+        const memo = new FlashMemo(cache);
+        await cache.set('k', 'old');
+        advanceTo(4_001);
+        const failure = new Error('loader failed');
+        const loader = vi.fn(() => {
+            if (asynchronous) return Promise.reject<string>(failure);
+            throw failure;
+        });
+        expect(memo.memoize('k', loader)).toBe('old');
+        expect(memo.memoize('k', loader)).toBe('old');
+        await flushMicrotasks(10);
+        expect(loader).toHaveBeenCalledTimes(1);
+        expect(memo.memoize('k', () => 'new')).toBe('old');
+        await flushMicrotasks(10);
+        expect(cache.get('k')).toEqual({ value: 'new', state: 'fresh' });
     });
 
     it('memo deduplicates concurrent loader calls for the same key', async () => {

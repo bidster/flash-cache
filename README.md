@@ -85,6 +85,21 @@ Then:
 - synchronous return for `L1` hits (`fresh` or `stale`)
 - `Promise` return when it has to consult `L2`
 
+### Concurrent operations
+
+Operations on the same key are not serialized. The cache permits temporarily outdated values when reads overlap with `set()` or `del()`:
+
+- A pending `L2` read can populate `L1` after `set()` completes, replacing the newer local value with the older result.
+- A pending `L2` read can populate `L1` after `del()` completes, making the deleted value locally available again.
+- This applies to both foreground reads and background refreshes. Promotion preserves the entry's original `staleAt` and `expAt`; it does not extend its TTL. Only entries still classified as `fresh` are promoted.
+- `set()` and `del()` do not cancel pending reads or remove them from single-flight deduplication. A subsequent read that needs `L2` can join an older request that is still pending.
+
+For example, an `L2` read starts with value `A`, then `await cache.set(key, 'B')` completes. If the earlier read subsequently returns `A` while it is still fresh, `L1` can contain `A` while `L2` contains `B`.
+
+If an application requires strict ordering or immediate invalidation, the caller must coordinate all operations on that key, including pending background refreshes. Awaiting `set()` or `del()` alone does not wait for earlier reads to finish.
+
+Concurrent `L2` reads are deduplicated within each `FlashCache` instance. Different instances remain independent, even when they use the same namespace and the same `L2` store object.
+
 ## API
 
 ```typescript
@@ -134,7 +149,7 @@ Returns:
 
 `get()` returns the result directly for `L1` hits and a `Promise` when it needs `L2`.
 
-Concurrent `L2` lookups for the same key are deduplicated with single-flight semantics.
+Concurrent `L2` lookups for the same key within one `FlashCache` instance are deduplicated with single-flight semantics. See [Concurrent operations](#concurrent-operations) for interactions with writes and deletion.
 
 ### `new FlashMemo(cache)`
 
@@ -149,6 +164,15 @@ Loads a value on `miss` or `expired`, stores it in the cache, and returns it.
 - `miss` and `expired` call `loader`, store the result, and return it
 - concurrent `memoize()` calls for the same key are deduplicated
 - `loader` must not return `undefined`
+
+Loader errors are handled identically whether the loader throws synchronously or returns a rejected Promise:
+
+- On `fresh`, the loader is not called.
+- On `stale` from either `L1` or `L2`, the stale value is returned and the background loader error is suppressed. The failed loader does not replace the cached value or extend its TTL.
+- On `miss` or `expired`, `memoize()` returns a Promise that rejects with the loader's error.
+- Loader errors are not cached. A subsequent call can retry loading when the cached value is not fresh; no automatic retry is scheduled.
+
+Background loader errors are not logged by `FlashMemo`. Applications that need logging or metrics should handle that inside the loader and rethrow the error so the load remains a failure.
 
 ```typescript
 memo.memoize('user:42', () => fetchUser(), {
@@ -168,17 +192,56 @@ Options:
 
 Deletes the key from both `L1` and `L2`.
 
+Pending reads can populate `L1` again after deletion; see [Concurrent operations](#concurrent-operations).
+
 ## Built-in stores
+
+The built-in stores are minimal implementations of the storage interfaces. Applications choose and configure memory limits, eviction policies, and physical cleanup of stored entries. `FlashCache` determines freshness and expiry from entry timestamps; it does not impose a storage size limit or run a cleanup scheduler.
 
 ### `MapStore`
 
 Simple in-memory store based on `Map`. Useful as `L1`, and also for tests.
+
+It has no size limit, eviction policy, or automatic removal of expired entries. Expiry changes how `FlashCache` treats an entry, but does not remove it from `MapStore`. Applications requiring bounded storage should supply a store with the appropriate policy.
 
 ### `IORedisStore`
 
 Redis-backed `L2` store built on top of `ioredis`.
 
 It stores serialized `StoreValue<T>` objects and relies on Redis `PXAT` to expire them at `expAt`.
+
+### Using an LRU store directly
+
+Any synchronous store compatible with `Store<T>` can be used as `L1` without an adapter. For example, `lru-cache` provides compatible `get`, `set`, and `delete` methods. Install it as a direct dependency of the application:
+
+```bash
+npm install lru-cache
+```
+
+```typescript
+import Redis from 'ioredis';
+import { LRUCache } from 'lru-cache';
+import {
+  FlashCache,
+  IORedisStore,
+  type JsonValue,
+  type StoreValue,
+} from '@bidster/flash-cache';
+
+const redis = new Redis();
+const l1 = new LRUCache<string, StoreValue<JsonValue>>({ max: 10_000 });
+const cache = new FlashCache<JsonValue>(
+  l1,
+  new IORedisStore(redis),
+  { ttl: 60_000, staleRatio: 0.4, namespace: 'users' },
+);
+
+await cache.set('42', { name: 'Igor' });
+```
+
+The LRU stores complete `StoreValue<T>` entries, including their timestamps. Here, `max` limits the number of entries, not their total size in bytes. `FlashCache` handles freshness and expiry, so the LRU does not need its own TTL for this configuration. Expired entries may remain allocated until eviction or explicit deletion; the entry count remains bounded by `max`.
+
+If physical cleanup at expiry is required, the application must configure or adapt its store accordingly. An LRU's own TTL does not automatically use the `expAt` field inside `StoreValue<T>`.
 
 ## Utilities
 
