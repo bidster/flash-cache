@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "strict": true,
+    "stripInternal": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,

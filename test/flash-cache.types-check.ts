@@ -1,11 +1,13 @@
 import {
     type CacheValueDeserializer,
     type CacheValueSerializer,
+    type SerializedMemoizeOptions,
+    type JsonValue,
     FlashCache,
-} from './flash-cache';
-import { FlashMemo, type SerializedMemoizeOptions } from './flash-memo';
-import { IORedisStore, type JsonValue } from './stores/ioredis-store';
-import { MapStore } from './stores/map-store';
+    FlashMemo,
+    IORedisStore,
+    MapStore,
+} from '../dist/esm/index';
 import type { Redis } from 'ioredis';
 
 declare const redis: Redis;
@@ -19,6 +21,15 @@ const stringCache = new FlashCache<string>(
 const stringMemo = new FlashMemo(stringCache);
 
 void stringCache.set('name', 'alice');
+void stringCache.set('name', 'alice', (value) => value.toUpperCase());
+void stringMemo.memoize('name', () => 'alice', {customTtl: 1_000});
+
+// @ts-expect-error custom TTL is only exposed through memoize
+void stringCache.set('name', 'alice', 1_000);
+// @ts-expect-error the internal fourth argument is not part of the public API
+void stringCache.set('name', 'alice', undefined, 1_000);
+// @ts-expect-error custom TTL must be a number
+void stringMemo.memoize('name', () => 'alice', {customTtl: '1000'});
 void stringMemo.memoize('name', () => 'alice');
 void stringMemo.memoize('name', async () => 'alice');
 
@@ -96,3 +107,9 @@ const userMemoOptions: SerializedMemoizeOptions<User, JsonValue> = {
 };
 
 void sharedMemo.memoize('user', () => new User('alice'), userMemoOptions);
+
+void sharedMemo.memoize('user', () => new User('alice'), {...userMemoOptions, customTtl: 1_000});
+// @ts-expect-error serialized writes also expose custom TTL only through memoize
+void sharedCache.set('user', new User('alice'), serializeUser, 1_000);
+// @ts-expect-error the former TTL-plus-serializer overload is no longer public
+void sharedCache.set('user', new User('alice'), 1_000, serializeUser);

@@ -88,8 +88,11 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
       secondary: MayBeAsyncStore<L2Value>,
       private readonly options: MiniCacheOptions,
     ) {
-        if (options.ttl <= 0) {
-            throw new Error('ttl must be positive');
+        if (!Number.isInteger(options.ttl) || options.ttl <= 0) {
+            throw new Error('ttl must be a positive integer in milliseconds');
+        }
+        if (!Number.isFinite(options.staleRatio) || options.staleRatio < 0 || options.staleRatio > 1) {
+            throw new Error('staleRatio must be a finite number between 0 and 1');
         }
 
         this.primary = primary;
@@ -183,34 +186,30 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
     set(
       key: string,
       value: CacheableValue<L1Value & L2Value>,
-      customTtl?: number,
     ): Promise<void>;
     set<Value extends L1Value>(
       key: string,
       value: CacheableValue<Value>,
       serialize: CacheValueSerializer<Value, L2Value>,
     ): Promise<void>;
+    /** @internal Used by FlashMemo after validating customTtl. */
     set<Value extends L1Value>(
       key: string,
       value: CacheableValue<Value>,
+      serialize: CacheValueSerializer<Value, L2Value> | undefined,
       customTtl: number | undefined,
-      serialize: CacheValueSerializer<Value, L2Value>,
     ): Promise<void>;
     async set<Value extends L1Value>(
       key: string,
       value: CacheableValue<Value>,
-      customTtlOrSerialize?: number | CacheValueSerializer<Value, L2Value>,
       serialize?: CacheValueSerializer<Value, L2Value>,
+      customTtl?: number,
     ): Promise<void> {
         if (value === undefined) {
             throw new Error('undefined values cannot be cached');
         }
 
         const prefixedKey = this.makePrefixedKey(key);
-        const customTtl = typeof customTtlOrSerialize === 'number' ? customTtlOrSerialize : undefined;
-        const serializeValue = typeof customTtlOrSerialize === 'function'
-          ? customTtlOrSerialize
-          : serialize;
         const ttl = customTtl ?? this.ttl;
         const n = now();
         const entry: StoreValue<Value> = {
@@ -221,7 +220,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         };
         await this.secondary.set(prefixedKey, {
             ...entry,
-            value: serializeValue ? serializeValue(value) : value as L2Value,
+            value: serialize ? serialize(value) : value as L2Value,
         });
         this.primary.set(prefixedKey, entry as StoreValue<L1Value>);
     }

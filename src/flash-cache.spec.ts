@@ -36,6 +36,129 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         vi.useRealTimers();
     });
 
+    const invalidTtls = [0, -1, 0.5, 1.5, NaN, Infinity, -Infinity, '1000', null];
+
+    it.each([...invalidTtls, undefined])('rejects invalid default ttl: %s', async (ttl) => {
+        const { FlashCache } = await import('./flash-cache');
+        const stores = [0, 1].map(() => ({ get: vi.fn(), set: vi.fn(), delete: vi.fn() }));
+        expect(() => new FlashCache(stores[0], stores[1], {
+            ttl: ttl as number, staleRatio: 0.4,
+        })).toThrow('ttl must be a positive integer in milliseconds');
+        for (const store of stores) {
+            for (const method of Object.values(store)) expect(method).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each([-0.1, 1.1, NaN, Infinity, -Infinity, '0.5', null, undefined])('rejects invalid staleRatio: %s', async (staleRatio) => {
+        const { FlashCache } = await import('./flash-cache');
+        const stores = [0, 1].map(() => ({ get: vi.fn(), set: vi.fn(), delete: vi.fn() }));
+        expect(() => new FlashCache(stores[0], stores[1], {
+            ttl: 10_000, staleRatio: staleRatio as number,
+        })).toThrow('staleRatio must be a finite number between 0 and 1');
+        for (const store of stores) {
+            for (const method of Object.values(store)) expect(method).not.toHaveBeenCalled();
+        }
+    });
+
+    it.each([0, 1])('supports staleRatio=%s and a one-millisecond ttl', async (staleRatio) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const cache = new FlashCache(new MapStore<string>(), new MapStore<string>(), {
+            ttl: 1, staleRatio,
+        });
+        await cache.set('k', 'value');
+        expect(cache.get('k')).toEqual({ value: 'value', state: staleRatio === 0 ? 'stale' : 'fresh' });
+        advanceTo(1);
+        expect(await cache.get('k')).toEqual({ value: 'value', state: 'expired' });
+    });
+
+    it.each(invalidTtls)('memo rejects invalid custom ttl before loading or writing: %s', async (customTtl) => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4 });
+        const memo = new FlashMemo(cache);
+        const loader = vi.fn(() => 'value');
+        const serialize = vi.fn((value: string) => value);
+        const result = memo.memoize('k', loader, {
+            customTtl: customTtl as number, serialize, deserialize: (value) => value,
+        });
+        expect(result).toBeInstanceOf(Promise);
+        await expect(result).rejects.toThrow('customTtl must be a positive integer in milliseconds');
+        expect(loader).not.toHaveBeenCalled();
+        expect(serialize).not.toHaveBeenCalled();
+        expect(l1.size).toBe(0);
+        expect(l2.size).toBe(0);
+        await expect(memo.memoize('k', loader, {customTtl: 1_000})).resolves.toBe('value');
+        expect(loader).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['fresh-l1', 'fresh-l2', 'stale-l1', 'stale-l2', 'expired'])(
+        'memo validates custom ttl only when filling (state=%s)', async (state) => {
+            const { FlashCache } = await import('./flash-cache');
+            const { FlashMemo } = await import('./flash-memo');
+            const { MapStore } = await import('./stores/map-store');
+            advanceTo(0);
+            const l1 = new MapStore<string>();
+            const l2 = new MapStore<string>();
+            const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+            const memo = new FlashMemo(cache);
+            await cache.set('k', 'old');
+            const oldEntry = l2.get('k');
+            if (state.startsWith('stale')) advanceTo(4_001);
+            if (state === 'expired') advanceTo(10_001);
+            if (state.endsWith('l2')) l1.clear();
+            const loader = vi.fn(() => 'new');
+            const write = vi.spyOn(cache, 'set');
+            const result = memo.memoize('k', loader, {customTtl: NaN});
+            if (state === 'expired') {
+                await expect(result).rejects.toThrow('customTtl must be a positive integer in milliseconds');
+            } else {
+                if (state.endsWith('l1')) expect(result).toBe('old');
+                expect(await result).toBe('old');
+            }
+            await flushMicrotasks(10);
+            expect(loader).not.toHaveBeenCalled();
+            expect(write).not.toHaveBeenCalled();
+            expect(l2.get('k')).toBe(oldEntry);
+            write.mockRestore();
+        },
+    );
+
+    it('memo uses default or custom ttl with and without serialization', async () => {
+        const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        const { MapStore } = await import('./stores/map-store');
+        advanceTo(0);
+        const l1 = new MapStore<string>();
+        const l2 = new MapStore<string>();
+        const cache = new FlashCache(l1, l2, { ttl: 7, staleRatio: 0.5, namespace: false });
+        const memo = new FlashMemo(cache);
+        const serialize = (value: string) => value.toUpperCase();
+        const deserialize = (value: string) => value.toLowerCase();
+        await cache.set('direct', 'value');
+        await cache.set('direct-serialized', 'value', serialize);
+        await memo.memoize('omitted', () => 'value');
+        await memo.memoize('undefined', () => 'value', {customTtl: undefined});
+        await memo.memoize('serialized', () => 'value', {serialize, deserialize});
+        await memo.memoize('custom', () => 'value', {customTtl: 1});
+        await memo.memoize('custom-serialized', () => 'value', {customTtl: 1, serialize, deserialize});
+        for (const key of ['direct', 'direct-serialized', 'omitted', 'undefined', 'serialized']) {
+            expect(l1.get(key)?.expAt).toBe(BASE.getTime() + 7);
+            expect(l1.get(key)?.staleAt).toBe(BASE.getTime() + 3.5);
+        }
+        for (const key of ['custom', 'custom-serialized']) {
+            expect(l1.get(key)?.expAt).toBe(BASE.getTime() + 1);
+            expect(l2.get(key)?.expAt).toBe(BASE.getTime() + 1);
+        }
+        expect(l1.get('custom-serialized')?.value).toBe('value');
+        expect(l2.get('custom-serialized')?.value).toBe('VALUE');
+    });
+
     it('basic lifecycle: miss → fresh → stale → expired → miss (after del)', async () => {
         // Импортируем модуль уже после включения fake timers
         const { FlashCache } = await import('./flash-cache'); // путь подправьте под свой файл
@@ -164,14 +287,14 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             set: vi.fn(async (key: string, entry: import('./flash-cache').StoreValue<string>) => { storage.set(key, entry); }),
             delete: (key: string) => storage.delete(key),
         };
-        const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
+        const cache = new FlashCache(l1, l2, { ttl: 5_000, staleRatio: 0.4, namespace: false });
         await cache.set('k', 'old');
         l2.set.mockImplementationOnce(async (key, entry) => {
             await pending.promise;
             storage.set(key, entry);
         });
         const serialize = vi.fn((value: string) => value.toUpperCase());
-        const write = cache.set('k', 'new', 5_000, serialize);
+        const write = cache.set('k', 'new', serialize);
         expect(serialize).toHaveBeenCalledExactlyOnceWith('new');
         expect(cache.get('k')).toEqual({ value: 'old', state: 'fresh' });
         expect(storage.get('k')?.value).toBe('old');
@@ -202,8 +325,10 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         set.mockRestore();
     });
 
-    it('custom TTL affects staleAt/expAt correctly', async () => {
+    it('memo custom TTL affects staleAt/expAt correctly', async () => {
         const { FlashCache } = await import('./flash-cache');
+        const { FlashMemo } = await import('./flash-memo');
+        advanceTo(0);
         const { MapStore }   = await import('./stores/map-store');
 
         const l1 = new MapStore<any>();
@@ -213,9 +338,9 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
 
         const cache = new FlashCache<any>(l1, l2, { ttl: baseTtl, staleRatio, namespace: false });
 
-        // set с кастомным TTL
+        // memoize с кастомным TTL
         const customTtl = 3000; // 3s
-        await cache.set('x', 'V', customTtl);
+        await new FlashMemo(cache).memoize('x', () => 'V', {customTtl});
 
         // Достаём запись напрямую из L1, чтобы проверить метки времени
         const prefixedKey = 'x'; // namespace=false → без префикса

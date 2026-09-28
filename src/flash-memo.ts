@@ -68,16 +68,11 @@ export class FlashMemo<L1Value = unknown, L2Value = L1Value> {
         serialize?: CacheValueSerializer<Value, L2Value>,
     ): Promise<CacheableValue<Value>> {
         return this.memoFlight(key, async () => {
-            const cachedValue = await fn();
-            if (serialize) {
-                await this.cache.set(key, cachedValue, customTtl, serialize);
-            } else {
-                await this.cache.set(
-                  key,
-                  cachedValue as CacheableValue<L1Value & L2Value>,
-                  customTtl,
-                );
+            if (customTtl !== undefined && (!Number.isInteger(customTtl) || customTtl <= 0)) {
+                throw new Error('customTtl must be a positive integer in milliseconds');
             }
+            const cachedValue = await fn();
+            await this.cache.set(key, cachedValue, serialize, customTtl);
             return cachedValue;
         });
     }

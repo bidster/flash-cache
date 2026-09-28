@@ -36,7 +36,7 @@
     "clean": "rm -rf dist",
     "test": "vitest run --exclude \"src/**/*.integration.spec.ts\"",
     "test:integration": "DOCKER_HOST=unix://$HOME/.docker/run/docker.sock vitest run src/stores/ioredis-store.integration.spec.ts",
-    "test:types": "tsc --noEmit"
+    "test:types": "yarn build && tsc --noEmit"
   },
   "keywords": [
     "cache",
