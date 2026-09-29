@@ -15,7 +15,7 @@ declare const redis: Redis;
 const stringCache = new FlashCache<string>(
     new MapStore<string>(),
     new MapStore<string>(),
-    { ttl: 10_000, staleRatio: 0.4, namespace: 'types' },
+    { ttl: 10_000, staleRatio: 0.4, namespace: 'types', useClones: false },
 );
 
 const stringMemo = new FlashMemo(stringCache);
@@ -30,6 +30,11 @@ void Promise.resolve(stringCache.get('n', Number)).then((result) => {
 void stringCache.set('name', 'alice');
 void stringCache.set('name', 'alice', (value) => value.toUpperCase());
 void stringMemo.memoize('name', () => 'alice', {customTtl: 1_000});
+void stringMemo.memoize('name', () => 'alice', {useClones: true});
+// @ts-expect-error cloning must be a boolean
+void stringMemo.memoize('name', () => 'alice', {useClones: 'false'});
+// @ts-expect-error the cloning override is internal to FlashMemo
+void stringCache.get('name', undefined, false);
 
 // @ts-expect-error custom TTL is only exposed through memoize
 void stringCache.set('name', 'alice', 1_000);

@@ -1,6 +1,6 @@
 {
   "name": "@bidster/flash-cache",
-  "version": "1.0.0-rc.5",
+  "version": "1.0.0-rc.6",
   "description": "Ultra-fast two-level cache (L1/L2) with stale-while-revalidate mechanism for Node.js",
   "repository": {
     "type": "git",

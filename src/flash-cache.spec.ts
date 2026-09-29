@@ -1008,7 +1008,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(loader).toHaveBeenCalledTimes(1);
     });
 
-    it('serializes on set and restores class instances on get for a shared cache', async () => {
+    it('serializes on set and restores class instances when cloning is disabled', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
 
@@ -1028,6 +1028,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             ttl: 10_000,
             staleRatio: 0.4,
             namespace: 'test',
+            useClones: false,
         });
 
         await cache.set('user:42', new User('Igor'), (user) => ({name: user.name}));

@@ -16,7 +16,7 @@ const defaultThreshold = 0.15;
 function createCachePair() {
   const l1 = new MapStore();
   const l2 = new MapStore();
-  const cache = new FlashCache(l1, l2, { ttl, staleRatio, namespace });
+  const cache = new FlashCache(l1, l2, { ttl, staleRatio, namespace, useClones: false });
   const memo = new FlashMemo(cache);
 
   return { cache, memo, l1, l2 };
@@ -80,7 +80,7 @@ function createBench() {
       freshGet.cache.get('fresh-get');
     }, {
       beforeEach: async () => {
-        await primeFresh(freshGet.cache, 'fresh-get', 'value');
+        await primeFresh(freshGet.cache, 'fresh-get', { value: 'fresh-value' });
       },
     })
     .add('get() stale entry with background refresh', async () => {

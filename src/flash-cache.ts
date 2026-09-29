@@ -1,4 +1,5 @@
 import { createSingleFlight } from './utils/singleflight';
+import { cloneValue } from './utils/clone-value';
 
 export interface StoreValue<T> {
     value: T;
@@ -33,6 +34,8 @@ export type MayBeAsyncStore<T = unknown> = {
 };
 
 export interface MiniCacheOptions {
+    /** Clone returned values with structuredClone. Defaults to true; writes retain the original reference. */
+    useClones?: boolean;
     ttl: number; // базовый ttl для L2
     staleRatio: number; // коэффициент для определения устаревания (например 0.8 → считается устаревшим за 80% времени жизни)
     namespace?: string | false; // неймспейс для ключей (по умолчанию нет)
@@ -64,6 +67,7 @@ function toAsyncStore<T>(store: MayBeAsyncStore<T>): AsyncStore<T> {
 }
 
 export class FlashCache<L1Value = unknown, L2Value = L1Value> {
+    readonly useClones: boolean;
     private readonly readFlight = createSingleFlight();
 
     // Precomputed functions for performance
@@ -96,6 +100,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         }
 
         this.primary = primary;
+        this.useClones = options.useClones ?? true;
         this.secondary = toAsyncStore(secondary);
 
         const prefixes = []
@@ -122,9 +127,16 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
       key: string,
       deserialize: CacheValueDeserializer<L2Value, Value>,
     ): MayBePromise<CacheResult<L1Value | Value>>;
+    /** @internal Used by FlashMemo to override cloning without cloning twice. */
+    get<Value>(
+      key: string,
+      deserialize: CacheValueDeserializer<L2Value, Value> | undefined,
+      useClones: boolean,
+    ): MayBePromise<CacheResult<L1Value | L2Value | Value>>;
     get<Value>(
       key: string,
       deserialize?: CacheValueDeserializer<L2Value, Value>,
+      useClones = this.useClones,
     ): MayBePromise<CacheResult<L1Value | L2Value | Value>> {
         const prefixedKey = this.makePrefixedKey(key);
 
@@ -138,11 +150,11 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
                 // не истек
                 if (l1.staleAt > n) {
                     // не устарел
-                    return {value: l1.value, state: 'fresh'};
+                    return {value: useClones ? cloneValue(l1.value) : l1.value, state: 'fresh'};
                 }
 
                 this.refreshFromL2(prefixedKey, deserialize);
-                return {value: l1.value, state: 'stale'};
+                return {value: useClones ? cloneValue(l1.value) : l1.value, state: 'stale'};
             }
         }
 
@@ -158,7 +170,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
                   this.primary.set(prefixedKey, {...entry, value: value as L1Value});
               }
 
-              return {value, state: mapStateToStr[state]};
+              return {value: useClones ? cloneValue(value) : value, state: mapStateToStr[state]};
           },
         );
     }

@@ -6,9 +6,12 @@ import type {
     MayBePromise,
 } from './flash-cache';
 import {createSingleFlight} from './utils/singleflight';
+import {cloneValue} from './utils/clone-value';
 
 export interface MemoizeOptions {
     customTtl?: number;
+    /** Overrides the cache's useClones setting for this call, including loader results. */
+    useClones?: boolean;
 }
 
 export interface SerializedMemoizeOptions<Value, StoredValue> extends MemoizeOptions {
@@ -38,7 +41,8 @@ export class FlashMemo<L1Value = unknown, L2Value = L1Value> {
     ): MayBePromise<CacheableValue<Value>> {
         const deserialize = 'deserialize' in options ? options.deserialize : undefined;
         const serialize = 'serialize' in options ? options.serialize : undefined;
-        const g = deserialize ? this.cache.get(key, deserialize) : this.cache.get(key);
+        const useClones = options.useClones ?? this.cache.useClones;
+        const g = this.cache.get(key, deserialize, useClones);
         if (!(g instanceof Promise)) {
             const r = g;
             if (r.state === 'fresh') {
@@ -57,7 +61,9 @@ export class FlashMemo<L1Value = unknown, L2Value = L1Value> {
                 void this.fillMemoValue(key, fn, options.customTtl, serialize).catch(() => undefined);
                 return result.value as CacheableValue<Value>;
             }
-            return this.fillMemoValue(key, fn, options.customTtl, serialize);
+            return this.fillMemoValue(key, fn, options.customTtl, serialize).then(
+                (value) => useClones ? cloneValue(value) : value,
+            );
         });
     }
 
