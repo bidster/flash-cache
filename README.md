@@ -1,6 +1,14 @@
 # @bidster/flash-cache
 
-Two-level cache for Node.js with:
+**A simple two-level cache for Node.js, designed to be one of the fastest.**
+
+Fresh L1 hits return synchronously; asynchronous work starts when it is needed.
+In our in-memory benchmarks, fresh reads took **3.7× less time than cache-manager**
+and **6.0× less than cacheable**, while fresh memoization took **8.3× less than
+cache-manager.wrap**. These are results for specific workloads, not a claim of
+universal performance leadership. See [benchmarks, methodology, and raw results](#benchmarks).
+
+Features:
 
 - `L1` in-memory reads
 - `L2` async persistence
@@ -269,6 +277,126 @@ Behavior:
 
 Use `namespace: false` only when you explicitly want to control raw keys yourself.
 
+## Benchmarks
+
+Measured on **2026-09-29** using an **Apple M4 Max**, macOS arm64 (Darwin 25.5.0),
+**Node.js 22.22.0**, and **Tinybench 5.1.0**. Participants: the local FlashCache
+checkout (`1.0.0-rc.4` package version), `cacheable 2.5.0`, `cache-manager 7.2.9`,
+`keyv 5.6.0`, and `lru-cache 11.5.3`. Dependencies are pinned in
+[bench/package-lock.json](bench/package-lock.json); the root build uses `yarn.lock`.
+
+Each number below is the **median of six runs' mean times, in ns per operation**;
+**lower is better**. Each benchmark script starts a fresh Node process. Runs are
+sequential, with participant order reversed on every second run. Parenthesized
+ranges are the minimum–maximum across those six means, **not confidence intervals**.
+Tinybench measures batches: these figures are batch averages, not individual
+request latency percentiles. No runs were discarded.
+
+### Cache-aside, without SWR
+
+[Source](bench/comparison.bench.mjs). The same keys, immutable 256-byte strings,
+TTL, and request trace are used for every participant. Each batch contains 10,000
+sequential operations. Every iteration starts with a new cache; the mixed workload
+has exactly 90% hits and 10% unique misses. On a miss, an async loader returns a
+prepared string and the write is awaited. Reads are awaited **only when they
+return a Promise**, preserving synchronous hits for both FlashCache and LRU.
+
+| Library | Fresh hits, 100% | Hits, 90% | Misses, 100% |
+| --- | ---: | ---: | ---: |
+| FlashCache | **74.4** | **158.2** | **805.0** |
+| cache-manager | 272.2 | 390.7 | 1,350.5 |
+| cacheable | 442.9 | 605.4 | 1,824.1 |
+| lru-cache — single-level reference | 80.1 | 105.6 | 262.8 |
+
+FlashCache uses two MapStore instances; cacheable and cache-manager use two
+Keyv/Map stores with serialization disabled and writes to both levels awaited.
+SWR is disabled, and entries do not expire during a batch. LRU has sufficient
+capacity to avoid eviction but still maintains recency. It is a **single-level
+reference**, not a functionally equivalent two-level cache. FlashCache's Map-based
+result versus standalone LRU does not measure the overhead of FlashCache over LRU.
+
+### Memoization and stale-while-revalidate
+
+[Source](bench/memoize.bench.mjs). Both participants use two Map-backed levels and
+1,024 distinct keys per batch. SWR entries have an initial age of 75% of TTL, with
+refresh starting at 50%. Each stale read returns the old value and starts one
+loader per key; refresh writes both levels (`refreshAllStores: true` for
+cache-manager). Fixtures seed timestamps directly in the pinned stores' entry
+formats; no wall-clock functions are mocked.
+
+| Scenario | FlashMemo.memoize | cache-manager.wrap |
+| --- | ---: | ---: |
+| Fresh hits | **59.3** (58.6–60.1) | 491.9 (484.4–500.2) |
+| SWR: return stale and schedule refresh | **434.3** (429.2–494.0) | 794.4 (788.3–803.1) |
+| SWR: full cycle, including refresh completion | **1,389.4** (1,354.5–1,417.2) | 2,226.3 (2,104.8–2,261.8) |
+
+A shared barrier holds loaders until all foreground reads finish, so neither
+participant starts serving refreshed values halfway through a batch. The foreground
+measurement excludes releasing that barrier and draining the remaining work;
+background microtasks that execute during reads are included. The full-cycle
+measurement includes releasing the barrier and waiting until the next event-loop
+phase, by which time these in-memory refreshes have completed. Both levels and
+subsequent reads are checked after every iteration, including warmup.
+
+The full-cycle result is about **1.6× less time** for FlashMemo in this workload.
+It includes the background work, but models neither database latency nor production
+traffic. Fresh memoization and cache-aside use different call paths and batch sizes;
+compare participants within each scenario.
+
+### Overhead over the same LRU
+
+[Source](bench/overhead.bench.mjs). Both configurations use the same LRU settings,
+capacity, and key sequence. LRU's own TTL is disabled in both; FlashCache adds entry
+metadata, its own expiry checks, and `CacheResult` handling. Namespace prefixing
+is disabled, all reads hit fresh L1 entries, and a guard rejects any L2 read.
+
+| Configuration | ns/operation |
+| --- | ---: |
+| LRU directly | **43.3** (42.9–44.0) |
+| FlashCache with LRU as L1 | **86.2** (82.6–87.7) |
+| Same FlashCache, with an unconditional `await` | **135.0** (134.4–137.8) |
+
+The wrapper adds roughly **43 ns per fresh hit** in this test. Avoiding an
+unnecessary `await` saves roughly another **50 ns**. These are small absolute costs,
+not zero overhead or a prediction of whole-application speedup.
+
+### Reproduce and inspect
+
+From a checkout of the benchmarked source, using Node 22.22.0, npm 10.9.4, and
+Yarn 1.22.22:
+
+```bash
+yarn install --frozen-lockfile
+yarn build
+cd bench
+npm ci --ignore-scripts
+npm run bench
+
+# Individual suites:
+npm run bench:cache
+npm run bench:memoize
+npm run bench:overhead
+
+# Reverse participant order:
+BENCH_REVERSE=1 npm run bench
+```
+
+The published data comes from six complete `npm run bench` runs, alternating
+`BENCH_REVERSE=0` and `BENCH_REVERSE=1`. Each task has at least 1,000 ms of measured
+time and 16 iterations, preceded by at least 250 ms and 8 warmup iterations.
+Tinybench stops each phase after both its time and iteration minima are met.
+Preparation and cleanup run outside the timer; value checks inside the workload
+are included. Miss counts and background updates are validated outside the timer.
+All suites share the public `@bidster/flash-cache` entrypoint via `file:..`;
+build the root package again after changing source.
+
+These are local microbenchmarks, not a comprehensive ranking. Participants have
+different internal features and costs. The tests contain no Redis/network I/O,
+object serialization, eviction pressure, or concurrent request load. GC, JIT,
+power settings, and other processes can affect results; the ranges above do not
+capture variation between machines. Measure your own workload before drawing
+application-level conclusions.
+
 ## Testing
 
 ```bash
@@ -292,6 +420,6 @@ Benchmark notes:
 
 - benchmark results are intended for local comparison, not as CI pass/fail thresholds
 - compare runs on the same machine and Node.js version
-- local regression checks compare against `bench/flash-cache.baseline.json`
+- local regression checks compare against `bench/flash-cache.baseline-2.json`
 - local checks gate on throughput, while latency stays in the report for diagnosis
 - default regression threshold is `15%`; override it with `FLASH_CACHE_BENCH_THRESHOLD=0.1 yarn bench:check`

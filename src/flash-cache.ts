@@ -218,10 +218,10 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
             staleAt: n + ttl * this.staleRatio,
             expAt: n + ttl,
         };
-        await this.secondary.set(prefixedKey, serialize ? {
+        await this.secondary.set(prefixedKey, {
             ...entry,
-            value: serialize(value),
-        } : entry as StoreValue<L1Value & L2Value>);
+            value: serialize ? serialize(value) : value as L2Value,
+        });
         this.primary.set(prefixedKey, entry as StoreValue<L1Value>);
     }
 

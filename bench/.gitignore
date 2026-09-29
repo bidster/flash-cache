@@ -1,0 +1,3 @@
+node_modules/
+results/
+flash-cache.baseline*.json

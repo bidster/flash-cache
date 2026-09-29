@@ -3,9 +3,7 @@ import process from 'node:process';
 
 import { Bench } from 'tinybench';
 
-import { FlashCache } from '../dist/esm/flash-cache.js';
-import { FlashMemo } from '../dist/esm/flash-memo.js';
-import { MapStore } from '../dist/esm/stores/map-store.js';
+import { FlashCache, FlashMemo, MapStore } from '@bidster/flash-cache';
 
 const namespace = 'bench';
 const ttl = 10_000;

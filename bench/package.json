@@ -1,0 +1,27 @@
+{
+  "name": "@bidster/flash-cache-comparison",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.22.0"
+  },
+  "packageManager": "npm@10.9.4",
+  "scripts": {
+    "bench": "npm run bench:cache && npm run bench:memoize && npm run bench:overhead",
+    "bench:cache": "node comparison.bench.mjs",
+    "bench:memoize": "node memoize.bench.mjs",
+    "bench:overhead": "node overhead.bench.mjs",
+    "bench:flash-cache": "node flash-cache.bench.mjs",
+    "bench:baseline": "node flash-cache.bench.mjs baseline",
+    "bench:check": "node flash-cache.bench.mjs check"
+  },
+  "dependencies": {
+    "@bidster/flash-cache": "file:..",
+    "cache-manager": "7.2.9",
+    "cacheable": "2.5.0",
+    "keyv": "5.6.0",
+    "lru-cache": "11.5.3",
+    "tinybench": "5.1.0"
+  }
+}

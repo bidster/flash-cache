@@ -275,7 +275,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             : { value: undefined, state: 'miss' });
     });
 
-    it.each([false, true])('set copies the entry only with a serializer (serialize=%s)', async (serialized) => {
+    it.each([false, true])('set copies the entry for L2 (serialize=%s)', async (serialized) => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
         advanceTo(0);
@@ -289,8 +289,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(l1.get('k')?.value).toBe('value');
         expect(l2.get('k')?.value).toBe(serialized ? 'VALUE' : 'value');
         expect(serialize).toHaveBeenCalledTimes(serialized ? 1 : 0);
-        if (serialized) expect(l2.get('k')).not.toBe(l1.get('k'));
-        else expect(l2.get('k')).toBe(l1.get('k'));
+        expect(l2.get('k')).not.toBe(l1.get('k'));
         expect(l2.get('k')).toEqual({ ...l1.get('k'), value: serialized ? 'VALUE' : 'value' });
     });
 
