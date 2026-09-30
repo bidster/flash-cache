@@ -1,5 +1,4 @@
 import { createSingleFlight } from './utils/singleflight';
-import { cloneValue } from './utils/clone-value';
 
 export interface StoreValue<T> {
     value: T;
@@ -34,17 +33,23 @@ export type MayBeAsyncStore<T = unknown> = {
 };
 
 export interface MiniCacheOptions {
-    /** Clone returned values with structuredClone. Defaults to true; writes retain the original reference. */
-    useClones?: boolean;
     ttl: number; // базовый ttl для L2
     staleRatio: number; // коэффициент для определения устаревания (например 0.8 → считается устаревшим за 80% времени жизни)
     namespace?: string | false; // неймспейс для ключей (по умолчанию нет)
 }
 
-export interface CacheResult<T> {
+/** Проверка завершена: stale означает, что L2 не дал свежих данных, но допустимое значение есть. */
+export interface SettledCacheResult<T> {
     value: T | undefined;
     state: 'fresh' | 'stale' | 'expired' | 'miss';
 }
+
+/** Допустимое значение L1 и Promise результата выполняющейся проверки L2. */
+export type CacheResult<T> = SettledCacheResult<T> | {
+    value: T;
+    state: 'revalidating';
+    revalidation: Promise<SettledCacheResult<T>>;
+};
 
 // внутренние коды состояния — быстрее сравнивать числа
 const enum S {
@@ -67,7 +72,6 @@ function toAsyncStore<T>(store: MayBeAsyncStore<T>): AsyncStore<T> {
 }
 
 export class FlashCache<L1Value = unknown, L2Value = L1Value> {
-    readonly useClones: boolean;
     private readonly readFlight = createSingleFlight();
 
     // Precomputed functions for performance
@@ -75,9 +79,11 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
 
     private computeState = <Value>(e: StoreValue<Value>) => {
         if (!e || e.value === undefined) return S.MISS;
+
         const n = now();
         if (e.expAt <= n) return S.EXPIRED;
         if (e.staleAt <= n) return S.STALE;
+
         return S.FRESH;
     };
 
@@ -95,12 +101,12 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         if (!Number.isInteger(options.ttl) || options.ttl <= 0) {
             throw new Error('ttl must be a positive integer in milliseconds');
         }
+
         if (!Number.isFinite(options.staleRatio) || options.staleRatio < 0 || options.staleRatio > 1) {
             throw new Error('staleRatio must be a finite number between 0 and 1');
         }
 
         this.primary = primary;
-        this.useClones = options.useClones ?? true;
         this.secondary = toAsyncStore(secondary);
 
         const prefixes = []
@@ -122,88 +128,106 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         this.ttl = options.ttl;
     }
 
+    /** Возвращает значение по ссылке; клонирование при необходимости выполняет FlashMemo. */
     get(key: string): MayBePromise<CacheResult<L1Value | L2Value>>;
+
     get<Value>(
       key: string,
       deserialize: CacheValueDeserializer<L2Value, Value>,
     ): MayBePromise<CacheResult<L1Value | Value>>;
-    /** @internal Used by FlashMemo to override cloning without cloning twice. */
+
     get<Value>(
       key: string,
       deserialize: CacheValueDeserializer<L2Value, Value> | undefined,
-      useClones: boolean,
     ): MayBePromise<CacheResult<L1Value | L2Value | Value>>;
+
     get<Value>(
       key: string,
       deserialize?: CacheValueDeserializer<L2Value, Value>,
-      useClones = this.useClones,
     ): MayBePromise<CacheResult<L1Value | L2Value | Value>> {
         const prefixedKey = this.makePrefixedKey(key);
-
         const l1 = this.primary.get(prefixedKey);
 
-        // инлайн fast-path
+        // Допустимое значение L1 можно вернуть синхронно.
         if (l1) {
             const n = now();
 
             if (l1.expAt > n) {
-                // не истек
+                // Свежий L1 не требует обращения к L2.
                 if (l1.staleAt > n) {
-                    // не устарел
-                    return {value: useClones ? cloneValue(l1.value) : l1.value, state: 'fresh'};
+                    return {value: l1.value, state: 'fresh'};
                 }
 
-                this.refreshFromL2(prefixedKey, deserialize);
-                return {value: useClones ? cloneValue(l1.value) : l1.value, state: 'stale'};
+                // Старое значение отдаём сразу, а результат проверки L2 — через Promise.
+                const revalidation = this.getThroughL2(prefixedKey, deserialize);
+
+                // Ошибка доступна через Promise, даже если вызывающий код его не ждёт.
+                void revalidation.catch(() => undefined);
+
+                return {
+                    value: l1.value,
+                    state: 'revalidating',
+                    revalidation,
+                };
             }
         }
 
-        return this.readFlight(prefixedKey, () => this.getThroughL2(prefixedKey)).then(
-          (entry) => {
-              if (!entry) {
-                  return {value: undefined, state: 'miss'};
-              }
-
-              const state = this.computeState(entry);
-              const value = deserialize ? deserialize(entry.value) : entry.value;
-              if (state === S.FRESH) {
-                  this.primary.set(prefixedKey, {...entry, value: value as L1Value});
-              }
-
-              return {value: useClones ? cloneValue(value) : value, state: mapStateToStr[state]};
-          },
-        );
+        // Допустимого L1 нет: результат чтения требует ожидания L2.
+        return this.getThroughL2(prefixedKey, deserialize);
     }
 
-    private refreshFromL2<Value>(
+    private getThroughL2<Value>(
       prefixedKey: string,
-      deserialize?: CacheValueDeserializer<L2Value, Value>,
-    ): void {
-        void this.readFlight(prefixedKey, async () => {
-            const entry = await this.getThroughL2(prefixedKey);
+      deserialize: CacheValueDeserializer<L2Value, Value> | undefined,
+    ): Promise<SettledCacheResult<L1Value | L2Value | Value>> {
+        // Объединяем чтение L2; десериализация остаётся отдельной для каждого вызова.
+        const read = this.readFlight(prefixedKey, async () => this.secondary.get(prefixedKey));
 
-            if (entry && this.computeState(entry) === S.FRESH) {
+        // Недоступность L2 обрабатываем как промах; ошибки десериализации и L1 остаются видимыми.
+        return read.catch(() => undefined).then((entry) => {
+            const state = entry ? this.computeState(entry) : S.MISS;
+
+            // Переносим допустимую запись в L1 с исходными сроками жизни.
+            if (entry && (state === S.FRESH || state === S.STALE)) {
                 const value = deserialize ? deserialize(entry.value) : entry.value;
                 this.primary.set(prefixedKey, {...entry, value: value as L1Value});
+
+                return {value, state: mapStateToStr[state]};
             }
 
-            return entry;
-        }).catch(() => undefined);
-    }
+            // Промах или истечение L2 не отменяют ещё допустимый L1.
+            // За время ожидания L2 локальная запись могла измениться или истечь.
+            const local = this.primary.get(prefixedKey);
 
-    private async getThroughL2(prefixedKey: string): Promise<StoreValue<L2Value> | undefined> {
-        return this.secondary.get(prefixedKey);
+            if (local && local.expAt > now()) {
+                return {
+                    value: local.value,
+                    state: mapStateToStr[this.computeState(local)],
+                };
+            }
+
+            // Допустимых данных нет. Истёкшее значение доступно только для диагностики.
+            const value = entry ? (deserialize ? deserialize(entry.value) : entry.value) : undefined;
+
+            return {
+                value,
+                state: state === S.EXPIRED || (local && this.computeState(local) === S.EXPIRED)
+                  ? 'expired' : 'miss',
+            };
+        });
     }
 
     set(
       key: string,
       value: CacheableValue<L1Value & L2Value>,
     ): Promise<void>;
+
     set<Value extends L1Value>(
       key: string,
       value: CacheableValue<Value>,
       serialize: CacheValueSerializer<Value, L2Value>,
     ): Promise<void>;
+
     /** @internal Used by FlashMemo after validating customTtl. */
     set<Value extends L1Value>(
       key: string,
@@ -211,6 +235,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
       serialize: CacheValueSerializer<Value, L2Value> | undefined,
       customTtl: number | undefined,
     ): Promise<void>;
+
     async set<Value extends L1Value>(
       key: string,
       value: CacheableValue<Value>,
@@ -224,22 +249,38 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         const prefixedKey = this.makePrefixedKey(key);
         const ttl = customTtl ?? this.ttl;
         const n = now();
+
         const entry: StoreValue<Value> = {
             value,
             time: now(),
             staleAt: n + ttl * this.staleRatio,
             expAt: n + ttl,
         };
-        await this.secondary.set(prefixedKey, {
+
+        // Ошибка сериализации должна произойти до изменения хранилищ.
+        const secondaryEntry = {
             ...entry,
             value: serialize ? serialize(value) : value as L2Value,
-        });
+        };
+
+        // Публикуем L1 сразу. При ошибке записи L2 новое значение в L1 сохраняется.
         this.primary.set(prefixedKey, entry as StoreValue<L1Value>);
+
+        try {
+            await this.secondary.set(prefixedKey, secondaryEntry);
+        } catch {
+            // Ошибка L2 не отменяет опубликованное значение L1.
+        }
     }
 
     async del(key: string): Promise<void> {
         const prefixedKey = this.makePrefixedKey(key);
         this.primary.delete(prefixedKey);
-        await this.secondary.delete(prefixedKey);
+
+        try {
+            await this.secondary.delete(prefixedKey);
+        } catch {
+            // Ошибка L2 не отменяет удаление из L1.
+        }
     }
 }

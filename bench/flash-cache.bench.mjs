@@ -12,11 +12,12 @@ const staleEntryOffset = 1;
 const freshEntryOffset = 5_000;
 const baselinePath = new URL('./flash-cache.baseline.json', import.meta.url);
 const defaultThreshold = 0.15;
+const memoOptions = { useClones: false };
 
 function createCachePair() {
   const l1 = new MapStore();
   const l2 = new MapStore();
-  const cache = new FlashCache(l1, l2, { ttl, staleRatio, namespace, useClones: false });
+  const cache = new FlashCache(l1, l2, { ttl, staleRatio, namespace });
   const memo = new FlashMemo(cache);
 
   return { cache, memo, l1, l2 };
@@ -92,14 +93,14 @@ function createBench() {
       afterEach: () => drainMicrotasks(),
     })
     .add('memo() fresh entry', () => {
-      freshMemo.memo.memoize('fresh-memo', async () => 'other-value');
+      freshMemo.memo.memoize('fresh-memo', async () => 'other-value', memoOptions);
     }, {
       beforeEach: async () => {
         await primeFresh(freshMemo.cache, 'fresh-memo', 'value');
       },
     })
     .add('memo() stale entry', () => {
-      staleMemo.memo.memoize('stale-memo', staleMemoLoader);
+      staleMemo.memo.memoize('stale-memo', staleMemoLoader, memoOptions);
     }, {
       beforeEach: () => {
         primeStale(staleMemo, 'stale-memo', 'stale-value', 'fresh-value');
@@ -107,7 +108,7 @@ function createBench() {
       afterEach: () => drainMicrotasks(),
     })
     .add('memo() miss entry', async () => {
-      await missMemo.memo.memoize('miss-memo', missMemoLoader);
+      await missMemo.memo.memoize('miss-memo', missMemoLoader, memoOptions);
     }, {
       beforeEach: () => {
         resetMissKey(missMemo, 'miss-memo');

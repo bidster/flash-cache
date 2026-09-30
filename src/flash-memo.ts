@@ -10,7 +10,7 @@ import {cloneValue} from './utils/clone-value';
 
 export interface MemoizeOptions {
     customTtl?: number;
-    /** Overrides the cache's useClones setting for this call, including loader results. */
+    /** Клонировать возвращаемые значения, включая результаты loader. По умолчанию true. */
     useClones?: boolean;
 }
 
@@ -29,11 +29,13 @@ export class FlashMemo<L1Value = unknown, L2Value = L1Value> {
         fn: () => MayBePromise<CacheableValue<L1Value & L2Value>>,
         options?: MemoizeOptions,
     ): MayBePromise<CacheableValue<L1Value & L2Value>>;
+
     memoize<Value extends L1Value>(
         key: string,
         fn: () => MayBePromise<CacheableValue<Value>>,
         options: SerializedMemoizeOptions<Value, L2Value>,
     ): MayBePromise<CacheableValue<Value>>;
+
     memoize<Value extends L1Value>(
         key: string,
         fn: () => MayBePromise<CacheableValue<Value>>,
@@ -41,45 +43,45 @@ export class FlashMemo<L1Value = unknown, L2Value = L1Value> {
     ): MayBePromise<CacheableValue<Value>> {
         const deserialize = 'deserialize' in options ? options.deserialize : undefined;
         const serialize = 'serialize' in options ? options.serialize : undefined;
-        const useClones = options.useClones ?? this.cache.useClones;
-        const g = this.cache.get(key, deserialize, useClones);
-        if (!(g instanceof Promise)) {
-            const r = g;
-            if (r.state === 'fresh') {
-                return r.value as CacheableValue<Value>;
-            }
-            if (r.state === 'stale') {
-                void this.fillMemoValue(key, fn, options.customTtl, serialize).catch(() => undefined);
-                return r.value as CacheableValue<Value>;
-            }
-        }
-        return Promise.resolve(g).then((result) => {
-            if (result.state === 'fresh') {
-                return result.value as CacheableValue<Value>;
-            }
-            if (result.state === 'stale') {
-                void this.fillMemoValue(key, fn, options.customTtl, serialize).catch(() => undefined);
-                return result.value as CacheableValue<Value>;
-            }
-            return this.fillMemoValue(key, fn, options.customTtl, serialize).then(
-                (value) => useClones ? cloneValue(value) : value,
-            );
-        });
-    }
+        const useClones = options.useClones ?? true;
 
-    private fillMemoValue<Value extends L1Value>(
-        key: string,
-        fn: () => MayBePromise<CacheableValue<Value>>,
-        customTtl?: number,
-        serialize?: CacheValueSerializer<Value, L2Value>,
-    ): Promise<CacheableValue<Value>> {
-        return this.memoFlight(key, async () => {
+        const cached = this.cache.get(key, deserialize);
+
+        if (!(cached instanceof Promise) && cached.state === 'fresh') {
+            return (useClones ? cloneValue(cached.value) : cached.value) as CacheableValue<Value>;
+        }
+
+        const refresh = this.memoFlight(key, async () => {
+            // Готовый результат не требует await; у revalidating ждём только проверку L2.
+            const result = cached instanceof Promise ? await cached : cached;
+            const checked = result.state === 'revalidating' ? await result.revalidation : result;
+
+            if (checked.state === 'fresh') return checked.value as CacheableValue<Value>;
+
+            const customTtl = options.customTtl;
+
             if (customTtl !== undefined && (!Number.isInteger(customTtl) || customTtl <= 0)) {
                 throw new Error('customTtl must be a positive integer in milliseconds');
             }
-            const cachedValue = await fn();
-            await this.cache.set(key, cachedValue, serialize, customTtl);
-            return cachedValue;
+
+            const value = await fn();
+            await this.cache.set(key, value, serialize, customTtl);
+
+            return value;
+        });
+
+        void refresh.catch(() => undefined);
+
+        if (!(cached instanceof Promise)) {
+            return (useClones ? cloneValue(cached.value) : cached.value) as CacheableValue<Value>;
+        }
+
+        return cached.then((result) => {
+            if (result.state === 'fresh' || result.state === 'stale') {
+                return (useClones ? cloneValue(result.value) : result.value) as CacheableValue<Value>;
+            }
+
+            return refresh.then((value) => useClones ? cloneValue(value) : value);
         });
     }
 }

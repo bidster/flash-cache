@@ -1,0 +1,479 @@
+{
+  "recordedAt": "2026-09-30T18:31:41.548Z",
+  "gitHead": "1cab32f14ccb3013c79c003a917267520a4242dd",
+  "workingTree": "M bench/package.json\n M src/cloning.spec.ts\n M src/flash-cache.spec.ts\n M src/flash-cache.ts\n M src/flash-memo.ts\n M test/flash-cache.types-check.ts\n?? AGENTS.md\n?? bench/flash-memo-cacheable.bench.mjs\n?? src/refresh.spec.ts",
+  "sourceSha256": {
+    "src/flash-cache.ts": "417cb8a43b6a945a4a9ce7fda1912dd9e3894aa7aa1d597f5b006a7e5fee15b1",
+    "src/flash-memo.ts": "fab1cbe08bd84349965a73b2262eb6bd7d39e2cf535b60f4620a2b9c9a48614b",
+    "src/stores/map-store.ts": "718894f0b5eb1729a5bd7748c3e928384124befbc83154c491283fb49f0f89bd",
+    "src/utils/singleflight.ts": "e60ad614738cfd55ceabbce07af90c83e4beb37cda22fafbe67a6c8b81554877",
+    "bench/flash-memo-cacheable.bench.mjs": "d6ecb7561ba7c23cfa2d87859d0ea2633dabe2ae4a19e271c30d299690f430a0"
+  },
+  "aggregation": "Median of four per-run mean trace times divided by operations; speedup is ratio of those medians.",
+  "notes": [
+    "Two Map stores per participant; useClones:false for FlashCache and FlashMemo; Keyv serialization disabled, so Map retains object references.",
+    "All returned values and both stores verified by object identity; loader counts and L1 population checked after every sample.",
+    "Cacheable.wrap 2.5.0 still hashes arguments before applying createKey; this public API overhead is included.",
+    "Sequential calls with async in-memory loader; no I/O, concurrency, SWR or eviction. Synchronous hits are not awaited."
+  ],
+  "summary": [
+    {
+      "scenario": "L1 hit",
+      "flashMemoNsPerOp": 50.79450785478002,
+      "cacheableWrapNsPerOp": 1108.8015807095771,
+      "speedup": 21.82916278822127,
+      "flashMemoRangeNsPerOp": [
+        48.509622550921996,
+        51.60289633642869
+      ],
+      "cacheableWrapRangeNsPerOp": [
+        1079.6754569892476,
+        1134.0315044943818
+      ]
+    },
+    {
+      "scenario": "L2 hit",
+      "flashMemoNsPerOp": 590.9105716126799,
+      "cacheableWrapNsPerOp": 1571.376516792372,
+      "speedup": 2.659245903324863,
+      "flashMemoRangeNsPerOp": [
+        581.9478809931428,
+        613.3129052151787
+      ],
+      "cacheableWrapRangeNsPerOp": [
+        1538.679932025099,
+        1600.6339952434128
+      ]
+    },
+    {
+      "scenario": "mixed 10% miss",
+      "flashMemoNsPerOp": 143.94169596553763,
+      "cacheableWrapNsPerOp": 1260.0667598062187,
+      "speedup": 8.754008012437914,
+      "flashMemoRangeNsPerOp": [
+        141.74466076487073,
+        144.65770173409948
+      ],
+      "cacheableWrapRangeNsPerOp": [
+        1236.950054320995,
+        1331.2190223684195
+      ]
+    },
+    {
+      "scenario": "cold 100% miss",
+      "flashMemoNsPerOp": 861.4588216759066,
+      "cacheableWrapNsPerOp": 2461.355330178604,
+      "speedup": 2.857194410511942,
+      "flashMemoRangeNsPerOp": [
+        839.6820875000049,
+        876.4879321739262
+      ],
+      "cacheableWrapRangeNsPerOp": [
+        2391.2885809523727,
+        2525.051769999991
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "run": 1,
+      "metadata": {
+        "node": "v22.22.0",
+        "platform": "darwin",
+        "os": "25.5.0",
+        "cpu": "Apple M4 Max",
+        "flashCache": "current working tree",
+        "cacheable": "2.5.0",
+        "keyv": "5.6.0",
+        "stores": [
+          "Map",
+          "Map"
+        ],
+        "useClones": false,
+        "valueSerialization": false,
+        "ttl": 3600000,
+        "keys": 1024,
+        "payload": "object with id and 256-character string",
+        "order": "normal",
+        "time": 1000,
+        "iterations": 16,
+        "warmupTime": 250,
+        "warmupIterations": 8
+      },
+      "results": [
+        {
+          "scenario": "L1 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 51.60289633642869,
+          "opsPerSecond": 19378757.220920894,
+          "rmePercent": 0.8059855430877437,
+          "samples": 1938
+        },
+        {
+          "scenario": "L1 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1087.5159445652155,
+          "opsPerSecond": 919526.7480880899,
+          "rmePercent": 0.6894660224406336,
+          "samples": 92
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 1024,
+          "nsPerOp": 581.9478809931428,
+          "opsPerSecond": 1718366.9408563122,
+          "rmePercent": 0.4337359606464716,
+          "samples": 1679
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 1024,
+          "nsPerOp": 1543.0818090936011,
+          "opsPerSecond": 648053.7804974806,
+          "rmePercent": 0.8765089805639956,
+          "samples": 633
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 141.74466076487073,
+          "opsPerSecond": 7054939.456653135,
+          "rmePercent": 0.48374043954850604,
+          "samples": 706
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1243.7258753086358,
+          "opsPerSecond": 804035.6961712693,
+          "rmePercent": 0.6295225915749819,
+          "samples": 81
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 854.2038855932087,
+          "opsPerSecond": 1170680.696805239,
+          "rmePercent": 1.3174142707812297,
+          "samples": 118
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 2402.220242857194,
+          "opsPerSecond": 416281.56409613916,
+          "rmePercent": 1.4625932236176198,
+          "samples": 42
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "metadata": {
+        "node": "v22.22.0",
+        "platform": "darwin",
+        "os": "25.5.0",
+        "cpu": "Apple M4 Max",
+        "flashCache": "current working tree",
+        "cacheable": "2.5.0",
+        "keyv": "5.6.0",
+        "stores": [
+          "Map",
+          "Map"
+        ],
+        "useClones": false,
+        "valueSerialization": false,
+        "ttl": 3600000,
+        "keys": 1024,
+        "payload": "object with id and 256-character string",
+        "order": "reverse",
+        "time": 1000,
+        "iterations": 16,
+        "warmupTime": 250,
+        "warmupIterations": 8
+      },
+      "results": [
+        {
+          "scenario": "L1 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1079.6754569892476,
+          "opsPerSecond": 926204.252885929,
+          "rmePercent": 0.8099291692717981,
+          "samples": 93
+        },
+        {
+          "scenario": "L1 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 48.509622550921996,
+          "opsPerSecond": 20614466.726684384,
+          "rmePercent": 0.4353371617564571,
+          "samples": 2062
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 1024,
+          "nsPerOp": 1538.679932025099,
+          "opsPerSecond": 649907.7418159815,
+          "rmePercent": 0.7458763976232405,
+          "samples": 635
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 1024,
+          "nsPerOp": 588.7212694017762,
+          "opsPerSecond": 1698596.6907839782,
+          "rmePercent": 0.6063015364747236,
+          "samples": 1659
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1236.950054320995,
+          "opsPerSecond": 808440.0792956308,
+          "rmePercent": 0.6072900343857779,
+          "samples": 81
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 143.81870790229598,
+          "opsPerSecond": 6953198.332718685,
+          "rmePercent": 0.6041052828047627,
+          "samples": 696
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 2391.2885809523727,
+          "opsPerSecond": 418184.5754483268,
+          "rmePercent": 1.4994362868634137,
+          "samples": 42
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 876.4879321739262,
+          "opsPerSecond": 1140917.0204086332,
+          "rmePercent": 1.7197727026763272,
+          "samples": 115
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "metadata": {
+        "node": "v22.22.0",
+        "platform": "darwin",
+        "os": "25.5.0",
+        "cpu": "Apple M4 Max",
+        "flashCache": "current working tree",
+        "cacheable": "2.5.0",
+        "keyv": "5.6.0",
+        "stores": [
+          "Map",
+          "Map"
+        ],
+        "useClones": false,
+        "valueSerialization": false,
+        "ttl": 3600000,
+        "keys": 1024,
+        "payload": "object with id and 256-character string",
+        "order": "normal",
+        "time": 1000,
+        "iterations": 16,
+        "warmupTime": 250,
+        "warmupIterations": 8
+      },
+      "results": [
+        {
+          "scenario": "L1 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 50.99052385321204,
+          "opsPerSecond": 19611487.084908757,
+          "rmePercent": 0.393159604478675,
+          "samples": 1962
+        },
+        {
+          "scenario": "L1 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1130.0872168539386,
+          "opsPerSecond": 884887.4538939659,
+          "rmePercent": 0.3932161623516965,
+          "samples": 89
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 1024,
+          "nsPerOp": 593.0998738235836,
+          "opsPerSecond": 1686056.67297351,
+          "rmePercent": 0.4375445528158482,
+          "samples": 1647
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 1024,
+          "nsPerOp": 1600.6339952434128,
+          "opsPerSecond": 624752.4437014892,
+          "rmePercent": 0.7483360121865494,
+          "samples": 611
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 144.0646840287793,
+          "opsPerSecond": 6941326.437784248,
+          "rmePercent": 0.5003947419345405,
+          "samples": 695
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1276.4076443038016,
+          "opsPerSecond": 783448.7708238662,
+          "rmePercent": 0.5411085498766758,
+          "samples": 79
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 868.7137577586045,
+          "opsPerSecond": 1151127.159054245,
+          "rmePercent": 1.3339825707545063,
+          "samples": 116
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 2525.051769999991,
+          "opsPerSecond": 396031.48413864145,
+          "rmePercent": 2.225973227128941,
+          "samples": 40
+        }
+      ]
+    },
+    {
+      "run": 4,
+      "metadata": {
+        "node": "v22.22.0",
+        "platform": "darwin",
+        "os": "25.5.0",
+        "cpu": "Apple M4 Max",
+        "flashCache": "current working tree",
+        "cacheable": "2.5.0",
+        "keyv": "5.6.0",
+        "stores": [
+          "Map",
+          "Map"
+        ],
+        "useClones": false,
+        "valueSerialization": false,
+        "ttl": 3600000,
+        "keys": 1024,
+        "payload": "object with id and 256-character string",
+        "order": "reverse",
+        "time": 1000,
+        "iterations": 16,
+        "warmupTime": 250,
+        "warmupIterations": 8
+      },
+      "results": [
+        {
+          "scenario": "L1 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1134.0315044943818,
+          "opsPerSecond": 881809.7169583126,
+          "rmePercent": 0.5282911495116938,
+          "samples": 89
+        },
+        {
+          "scenario": "L1 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 50.59849185634801,
+          "opsPerSecond": 19763434.90314013,
+          "rmePercent": 0.37460951420442656,
+          "samples": 1977
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 1024,
+          "nsPerOp": 1599.6712244911432,
+          "opsPerSecond": 625128.4543285455,
+          "rmePercent": 0.6727616501776125,
+          "samples": 611
+        },
+        {
+          "scenario": "L2 hit",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 1024,
+          "nsPerOp": 613.3129052151787,
+          "opsPerSecond": 1630489.0888430816,
+          "rmePercent": 0.6442519158005788,
+          "samples": 1593
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 1331.2190223684195,
+          "opsPerSecond": 751191.1888254602,
+          "rmePercent": 1.0190068697406829,
+          "samples": 76
+        },
+        {
+          "scenario": "mixed 10% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 144.65770173409948,
+          "opsPerSecond": 6912870.784012151,
+          "rmePercent": 0.6678584334454266,
+          "samples": 692
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "Cacheable.wrap",
+          "operationsPerSample": 10000,
+          "nsPerOp": 2520.490417500014,
+          "opsPerSecond": 396748.18561376043,
+          "rmePercent": 1.623844978164547,
+          "samples": 40
+        },
+        {
+          "scenario": "cold 100% miss",
+          "name": "FlashMemo.memoize",
+          "operationsPerSample": 10000,
+          "nsPerOp": 839.6820875000049,
+          "opsPerSecond": 1190926.9173257125,
+          "rmePercent": 1.251141692926745,
+          "samples": 120
+        }
+      ]
+    }
+  ]
+}

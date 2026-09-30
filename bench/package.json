@@ -11,6 +11,7 @@
     "bench": "npm run bench:cache && npm run bench:memoize && npm run bench:overhead",
     "bench:cache": "node comparison.bench.mjs",
     "bench:memoize": "node memoize.bench.mjs",
+    "bench:flash-memo-cacheable": "node flash-memo-cacheable.bench.mjs",
     "bench:overhead": "node overhead.bench.mjs",
     "bench:flash-cache": "node flash-cache.bench.mjs",
     "bench:baseline": "node flash-cache.bench.mjs baseline",

@@ -1,5 +1,7 @@
 import {
     type CacheValueDeserializer,
+    type CacheResult,
+    type SettledCacheResult,
     type CacheValueSerializer,
     type SerializedMemoizeOptions,
     type JsonValue,
@@ -15,8 +17,13 @@ declare const redis: Redis;
 const stringCache = new FlashCache<string>(
     new MapStore<string>(),
     new MapStore<string>(),
-    { ttl: 10_000, staleRatio: 0.4, namespace: 'types', useClones: false },
+    { ttl: 10_000, staleRatio: 0.4, namespace: 'types' },
 );
+
+// @ts-expect-error cloning is configured only on memoize
+new FlashCache(new MapStore<string>(), new MapStore<string>(), {ttl: 1_000, staleRatio: 0.5, useClones: true});
+// @ts-expect-error FlashCache does not expose a cloning setting
+void stringCache.useClones;
 
 const stringMemo = new FlashMemo(stringCache);
 
@@ -33,8 +40,13 @@ void stringMemo.memoize('name', () => 'alice', {customTtl: 1_000});
 void stringMemo.memoize('name', () => 'alice', {useClones: true});
 // @ts-expect-error cloning must be a boolean
 void stringMemo.memoize('name', () => 'alice', {useClones: 'false'});
-// @ts-expect-error the cloning override is internal to FlashMemo
+// @ts-expect-error FlashCache.get has no cloning argument
 void stringCache.get('name', undefined, false);
+
+// @ts-expect-error FlashCache.get has no L2 error policy flag
+void stringCache.get('name', undefined, true);
+// @ts-expect-error FlashCache.set has no L2 error policy flag
+void stringCache.set('name', 'alice', undefined, undefined, true);
 
 // @ts-expect-error custom TTL is only exposed through memoize
 void stringCache.set('name', 'alice', 1_000);
@@ -141,3 +153,25 @@ void sharedMemo.memoize('user', () => new User('alice'), {...userMemoOptions, cu
 void sharedCache.set('user', new User('alice'), serializeUser, 1_000);
 // @ts-expect-error the former TTL-plus-serializer overload is no longer public
 void sharedCache.set('user', new User('alice'), 1_000, serializeUser);
+
+void Promise.resolve(userCache.get('user', deserializeUser)).then(async (result) => {
+    if (result.state === 'revalidating') {
+        const pending: Promise<SettledCacheResult<User>> = result.revalidation;
+        const user: User = result.value;
+        user.greeting();
+        const checked = await pending;
+        checked.value?.greeting();
+        // @ts-expect-error a completed check cannot start another revalidation
+        void checked.revalidation;
+        // @ts-expect-error revalidating is not a completed state
+        const state: 'revalidating' = checked.state;
+    } else {
+        // @ts-expect-error only revalidating results expose a promise
+        void result.revalidation;
+    }
+});
+
+// @ts-expect-error revalidating requires an awaitable L2 result
+const incompleteRevalidation: CacheResult<string> = {value: 'old', state: 'revalidating'};
+// @ts-expect-error a fresh result cannot carry a background check
+const unexpectedRevalidation: CacheResult<string> = {value: 'fresh', state: 'fresh', revalidation: Promise.resolve({value: 'new', state: 'fresh'})};

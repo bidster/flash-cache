@@ -68,7 +68,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             ttl: 1, staleRatio,
         });
         await cache.set('k', 'value');
-        expect(cache.get('k')).toEqual({ value: 'value', state: staleRatio === 0 ? 'stale' : 'fresh' });
+        expect(cache.get('k')).toEqual({ value: 'value', state: staleRatio === 0 ? 'revalidating' : 'fresh', ...(staleRatio === 0 ? { revalidation: expect.any(Promise) } : {}) });
         advanceTo(1);
         expect(await cache.get('k')).toEqual({ value: 'value', state: 'expired' });
     });
@@ -159,7 +159,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(l2.get('custom-serialized')?.value).toBe('VALUE');
     });
 
-    it('basic lifecycle: miss → fresh → stale → expired → miss (after del)', async () => {
+    it('basic lifecycle: miss → fresh → revalidating → expired → miss (after del)', async () => {
         // Импортируем модуль уже после включения fake timers
         const { FlashCache } = await import('./flash-cache'); // путь подправьте под свой файл
         const { MapStore }   = await import('./stores/map-store');
@@ -186,10 +186,10 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(r.state).toBe('fresh');
         expect(r.value).toBe('A');
 
-        // 3) Двигаем время за границу staleAt (800мс), но до expAt (1000мс) → stale
+        // 3) За границей staleAt возвращаем L1 и проверяем L2 → revalidating
         advanceTo(850);
         r = await cache.get('k');
-        expect(r.state).toBe('stale');
+        expect(r.state).toBe('revalidating');
         expect(r.value).toBe('A'); // значение остаётся тем же
 
         // 4) После истечения TTL (1000мс+) → expired
@@ -242,7 +242,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             { failureAt, existing: false },
             { failureAt, existing: true },
         ]),
-    )('set preserves L1 on failure (at=$failureAt, existing=$existing)', async ({ failureAt, existing }) => {
+    )('set preserves L1 on serialization failure and publishes it before L2 failure (at=$failureAt, existing=$existing)', async ({ failureAt, existing }) => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
         advanceTo(0);
@@ -265,12 +265,15 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         } else {
             if (failureAt === 'l2-throw') l2.set.mockImplementationOnce(() => { throw failure; });
             else l2.set.mockRejectedValueOnce(failure);
-            await expect(cache.set('k', 'new')).rejects.toBe(failure);
+            await expect(cache.set('k', 'new')).resolves.toBeUndefined();
             expect(l2.set).toHaveBeenCalledTimes(1);
         }
-        expect(l1.get('k')).toBe(beforeL1);
+        if (failureAt === 'serialize') expect(l1.get('k')).toBe(beforeL1);
+        else expect(l1.get('k')?.value).toBe('new');
         expect(storage.get('k')).toBe(beforeL2);
-        expect(await cache.get('k')).toEqual(existing
+        expect(await cache.get('k')).toEqual(failureAt !== 'serialize'
+            ? { value: 'new', state: 'fresh' }
+            : existing
             ? { value: 'old', state: 'fresh' }
             : { value: undefined, state: 'miss' });
     });
@@ -293,7 +296,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(l2.get('k')).toEqual({ ...l1.get('k'), value: serialized ? 'VALUE' : 'value' });
     });
 
-    it('set publishes to L1 only after L2 succeeds, preserving original timestamps', async () => {
+    it('set publishes to L1 before L2 completes, preserving original timestamps', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
         advanceTo(0);
@@ -313,9 +316,13 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         });
         const serialize = vi.fn((value: string) => value.toUpperCase());
         const write = cache.set('k', 'new', serialize);
+        let settled = false;
+        void write.then(() => { settled = true; });
         expect(serialize).toHaveBeenCalledExactlyOnceWith('new');
-        expect(cache.get('k')).toEqual({ value: 'old', state: 'fresh' });
+        expect(cache.get('k')).toEqual({ value: 'new', state: 'fresh' });
         expect(storage.get('k')?.value).toBe('old');
+        await flushMicrotasks();
+        expect(settled).toBe(false);
         advanceTo(1_000);
         pending.resolve();
         await write;
@@ -327,7 +334,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(storage.get('k')).toEqual({ ...l1.get('k'), value: 'NEW' });
     });
 
-    it('set propagates L1 failure after L2 has already been updated', async () => {
+    it('set propagates L1 failure without writing L2', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
         advanceTo(0);
@@ -337,10 +344,13 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         await cache.set('k', 'old');
         const failure = new Error('L1 write failed');
         const set = vi.spyOn(l1, 'set').mockImplementationOnce(() => { throw failure; });
+        const secondarySet = vi.spyOn(l2, 'set');
         await expect(cache.set('k', 'new')).rejects.toBe(failure);
-        expect(l2.get('k')?.value).toBe('new');
+        expect(secondarySet).not.toHaveBeenCalled();
+        expect(l2.get('k')?.value).toBe('old');
         expect(l1.get('k')?.value).toBe('old');
         set.mockRestore();
+        secondarySet.mockRestore();
     });
 
     it('memo custom TTL affects staleAt/expAt correctly', async () => {
@@ -370,10 +380,10 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(e!.staleAt).toBe(start + Math.floor(customTtl * staleRatio));
         expect(e!.expAt).toBe(start + customTtl);
 
-        // На границе stale: двигаем точно к staleAt → должно быть stale
+        // На границе staleAt начинается проверка L2 → revalidating
         vi.setSystemTime(new Date(e!.staleAt));
         let r = await cache.get('x');
-        expect(r.state).toBe('stale');
+        expect(r.state).toBe('revalidating');
 
         // Чуть после expAt → expired
         vi.setSystemTime(new Date(e!.expAt + 1));
@@ -424,10 +434,10 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         await Promise.resolve();
 
         expect(result).not.toBeInstanceOf(Promise);
-        expect(result).toEqual({ value: 'A', state: 'stale' });
+        expect(result).toEqual({ value: 'A', state: 'revalidating', revalidation: expect.any(Promise) });
     });
 
-    it('propagates L2 read errors when the response depends on L2', async () => {
+    it('treats L2 read errors as a cache miss', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore }   = await import('./stores/map-store');
 
@@ -449,14 +459,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             namespace: 'test',
         });
 
-        await Promise.resolve(cache.get('k')).then(
-            () => {
-                throw new Error('expected L2 error to be propagated');
-            },
-            (error) => {
-                expect(error).toBe(l2Failure);
-            },
-        );
+        await expect(cache.get('k')).resolves.toEqual({ value: undefined, state: 'miss' });
     });
 
     it('deduplicates concurrent L2 reads for the same key', async () => {
@@ -543,8 +546,8 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
 
         expect(l2A.get).toHaveBeenCalledTimes(sharedL2 ? 2 : 1);
         expect(l2B.get).toHaveBeenCalledTimes(sharedL2 ? 2 : 1);
-        const expectedA = { value: stale ? 'old-A' : 'A', state: stale ? 'stale' : 'fresh' };
-        const expectedB = { value: stale ? 'old-B' : sharedL2 ? 'A' : 'B', state: stale ? 'stale' : 'fresh' };
+        const expectedA = { value: stale ? 'old-A' : 'A', state: stale ? 'revalidating' : 'fresh', ...(stale ? { revalidation: expect.any(Promise) } : {}) };
+        const expectedB = { value: stale ? 'old-B' : sharedL2 ? 'A' : 'B', state: stale ? 'revalidating' : 'fresh', ...(stale ? { revalidation: expect.any(Promise) } : {}) };
         expect(results).toEqual([expectedA, expectedA, expectedB, expectedB]);
         if (stale) {
             expect(firstA).not.toBeInstanceOf(Promise);
@@ -580,7 +583,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         if (operation === 'set') await cache.set('k', 'new');
         else await cache.del('k');
         pending.resolve(oldEntry);
-        const expected = { value: stale ? 'stale' : 'old', state: stale ? 'stale' : 'fresh' };
+        const expected = { value: stale ? 'stale' : 'old', state: stale ? 'revalidating' : 'fresh', ...(stale ? { revalidation: expect.any(Promise) } : {}) };
         expect(await first).toEqual(expected);
         expect(await second).toEqual(expected);
         await flushMicrotasks(10);
@@ -630,13 +633,13 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         const cache = new FlashCache(l1, l2, { ttl: 10_000, staleRatio: 0.4, namespace: false });
         if (operation === 'get') {
             l2.get.mockRejectedValueOnce(failure);
-            await expect(cache.get('k')).rejects.toBe(failure);
+            await expect(cache.get('k')).resolves.toEqual({ value: undefined, state: 'miss' });
         } else if (operation === 'set') {
             l2.set.mockRejectedValueOnce(failure);
-            await expect(cache.set('k', 'new')).rejects.toBe(failure);
+            await expect(cache.set('k', 'new')).resolves.toBeUndefined();
         } else {
             l2.delete.mockRejectedValueOnce(failure);
-            await expect(cache.del('k')).rejects.toBe(failure);
+            await expect(cache.del('k')).resolves.toBeUndefined();
         }
         l1.clear();
         expect(await cache.get('k')).toEqual({ value: 'fresh', state: 'fresh' });
@@ -668,7 +671,9 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         await cache.set('k', 'A');
         advanceTo(4_001);
 
-        expect(cache.get('k')).toEqual({ value: 'A', state: 'stale' });
+        const result = cache.get('k');
+        expect(result).toEqual({ value: 'A', state: 'revalidating', revalidation: expect.any(Promise) });
+        if (result instanceof Promise || result.state !== 'revalidating') throw new Error('Expected revalidating');
 
         l2Read.resolve({
             value: 'B',
@@ -678,8 +683,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         });
 
         const prefixedKey = 'flashCache:v1:test:k';
-        await l2Read.promise;
-        await flushMicrotasks();
+        await expect(result.revalidation).resolves.toEqual({value: 'B', state: 'fresh'});
 
         expect(l1.get(prefixedKey)?.value).toBe('B');
         expect(cache.get('k')).toEqual({ value: 'B', state: 'fresh' });
@@ -709,11 +713,11 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         await cache.set('k', 'A');
         advanceTo(4_001);
 
-        expect(cache.get('k')).toEqual({ value: 'A', state: 'stale' });
+        expect(cache.get('k')).toEqual({ value: 'A', state: 'revalidating', revalidation: expect.any(Promise) });
 
         await flushMicrotasks();
 
-        expect(cache.get('k')).toEqual({ value: 'A', state: 'stale' });
+        expect(cache.get('k')).toEqual({ value: 'A', state: 'revalidating', revalidation: expect.any(Promise) });
         expect(l2.get).toHaveBeenCalledTimes(2);
     });
 
@@ -776,7 +780,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(await cache.get('missing-user')).toEqual({ value: null, state: 'fresh' });
 
         advanceTo(4_001);
-        expect(await cache.get('missing-user')).toEqual({ value: null, state: 'stale' });
+        expect(await cache.get('missing-user')).toEqual({ value: null, state: 'revalidating', revalidation: expect.any(Promise) });
     });
 
     it('rejects undefined values instead of storing ambiguous misses', async () => {
@@ -897,9 +901,10 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         const loader = vi.fn(async () => 'B');
 
         expect(memo.memoize('k', loader)).toBe('A');
-        expect(loader).toHaveBeenCalledTimes(1);
+        expect(loader).not.toHaveBeenCalled();
 
-        await flushMicrotasks();
+        await flushMicrotasks(10);
+        expect(loader).toHaveBeenCalledTimes(1);
 
         expect(await cache.get('k')).toEqual({ value: 'B', state: 'fresh' });
     });
@@ -940,7 +945,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         }
         await flushMicrotasks(10);
         expect(loader).toHaveBeenCalledTimes(state === 'fresh' ? 0 : 1);
-        expect(l1.get('k')).toBe(beforeL1);
+        expect(l1.get('k')).toEqual(state === 'stale-l2' ? beforeL2 : beforeL1);
         expect(l2.get('k')).toBe(beforeL2);
         if (state === 'fresh') return;
 
@@ -998,7 +1003,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         const first = Promise.resolve(memo.memoize('k', loader));
         const second = Promise.resolve(memo.memoize('k', loader));
 
-        await flushMicrotasks();
+        await flushMicrotasks(10);
         expect(loader).toHaveBeenCalledTimes(1);
 
         loaderRead.resolve('A');
@@ -1008,7 +1013,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
         expect(loader).toHaveBeenCalledTimes(1);
     });
 
-    it('serializes on set and restores class instances when cloning is disabled', async () => {
+    it('serializes on set and restores class instances', async () => {
         const { FlashCache } = await import('./flash-cache');
         const { MapStore } = await import('./stores/map-store');
 
@@ -1028,7 +1033,6 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             ttl: 10_000,
             staleRatio: 0.4,
             namespace: 'test',
-            useClones: false,
         });
 
         await cache.set('user:42', new User('Igor'), (user) => ({name: user.name}));
