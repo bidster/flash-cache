@@ -25,7 +25,7 @@ export class FlashMemo<L1Value = unknown, L2Value = L1Value> {
     constructor(private readonly cache: FlashCache<L1Value, L2Value>) {}
 
     memoize(
-        key: string,
+        key: [L2Value] extends [L1Value] ? string : never,
         fn: () => MayBePromise<CacheableValue<L1Value & L2Value>>,
         options?: MemoizeOptions,
     ): MayBePromise<CacheableValue<L1Value & L2Value>>;
@@ -45,7 +45,8 @@ export class FlashMemo<L1Value = unknown, L2Value = L1Value> {
         const serialize = 'serialize' in options ? options.serialize : undefined;
         const useClones = options.useClones ?? true;
 
-        const cached = this.cache.get(key, deserialize);
+        // Перегрузки разрешают отсутствие deserialize только при совместимых типах L2 и L1.
+        const cached = this.cache.get(key, deserialize!);
 
         if (!(cached instanceof Promise) && cached.state === 'fresh') {
             return (useClones ? cloneValue(cached.value) : cached.value) as CacheableValue<Value>;

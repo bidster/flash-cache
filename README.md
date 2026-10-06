@@ -199,7 +199,11 @@ const date = await memo.memoize('createdAt', () => new Date(), {
 });
 ```
 
-Deserialization runs only for L2 data; an L1 hit already contains the local value. Without a deserializer, L2 values are returned as stored. The read type includes both the L1 type and the deserialized or raw L2 type. Serializers and deserializers must be synchronous. L2 reads are deduplicated, but each caller deserializes and promotes the result separately.
+Deserialization restores the representation stored in L1; it is not a per-call projection of the returned value. It runs only for L2 data and must return a value assignable to the L1 type. An L1 hit returns the stored local value without calling the deserializer. When an L2 entry is fresh or stale, `get()` promotes the deserialized value into L1, preserving the entry's original timestamps.
+
+TypeScript permits `get(key)` or an optional deserializer only when the entire L2 type is assignable to the L1 type. For example, `FlashCache<Date, string>` requires a deserializer on every read, while `FlashCache<string, string>` and a shared `FlashCache<unknown, JsonValue>` allow reads without one. Without a deserializer, L2 values are promoted and returned as stored. The same compatibility requirement applies to `memoize()` without serialization options.
+
+All operations on the same key must use consistent value types and transformations. A shared cache can store different types under different string keys, but TypeScript cannot enforce that agreement for individual keys. Direct reads from an `unknown` L1 remain `unknown`, even when a deserializer is provided, because an L1 hit bypasses it. Serializers and deserializers must be synchronous. L2 reads are deduplicated, but each caller deserializes and promotes the result separately.
 
 `IORedisStore` JSON-encodes the complete entry. It accepts `JsonValue` and does not restore domain types such as `Date`, `Map`, or class instances automatically. Use explicit conversion when the L1 value is not JSON-compatible.
 

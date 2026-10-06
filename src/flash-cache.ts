@@ -128,20 +128,27 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         this.ttl = options.ttl;
     }
 
-    /** Возвращает значение по ссылке; клонирование при необходимости выполняет FlashMemo. */
-    get(key: string): MayBePromise<CacheResult<L1Value | L2Value>>;
+    /**
+     * Возвращает значение по ссылке; допустимую запись L2 переносит в L1 с исходными сроками жизни.
+     * Без deserialize чтение разрешено, только если весь тип L2 совместим с типом L1.
+     */
+    get(key: [L2Value] extends [L1Value] ? string : never): MayBePromise<CacheResult<L1Value | L2Value>>;
 
-    get<Value>(
+    /**
+     * deserialize восстанавливает представление для L1 и не вызывается при попадании в L1.
+     * Все операции с одним ключом должны использовать согласованные типы и преобразования.
+     */
+    get<Value extends L1Value>(
       key: string,
       deserialize: CacheValueDeserializer<L2Value, Value>,
     ): MayBePromise<CacheResult<L1Value | Value>>;
 
-    get<Value>(
-      key: string,
+    get<Value extends L1Value>(
+      key: [L2Value] extends [L1Value] ? string : never,
       deserialize: CacheValueDeserializer<L2Value, Value> | undefined,
     ): MayBePromise<CacheResult<L1Value | L2Value | Value>>;
 
-    get<Value>(
+    get<Value extends L1Value>(
       key: string,
       deserialize?: CacheValueDeserializer<L2Value, Value>,
     ): MayBePromise<CacheResult<L1Value | L2Value | Value>> {
@@ -176,7 +183,7 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         return this.getThroughL2(prefixedKey, deserialize);
     }
 
-    private getThroughL2<Value>(
+    private getThroughL2<Value extends L1Value>(
       prefixedKey: string,
       deserialize: CacheValueDeserializer<L2Value, Value> | undefined,
     ): Promise<SettledCacheResult<L1Value | L2Value | Value>> {

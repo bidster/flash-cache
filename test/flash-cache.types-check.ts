@@ -27,12 +27,74 @@ void stringCache.useClones;
 
 const stringMemo = new FlashMemo(stringCache);
 
-void Promise.resolve(stringCache.get('n', Number)).then((result) => {
+void stringCache.get('name');
+void stringCache.get('name', undefined);
+void stringCache.get('name', (value) => value.toUpperCase());
+declare const optionalStringDeserializer: CacheValueDeserializer<string, string> | undefined;
+void stringCache.get('name', optionalStringDeserializer);
+
+// @ts-expect-error a deserialized number cannot be promoted into a string L1
+void stringCache.get('n', Number);
+// @ts-expect-error explicit type arguments cannot bypass the L1 constraint
+void stringCache.get<number>('n', Number);
+declare const optionalNumberDeserializer: CacheValueDeserializer<string, number> | undefined;
+// @ts-expect-error an optional deserializer must also return a value compatible with L1
+void stringCache.get('n', optionalNumberDeserializer);
+
+const mixedCache = new FlashCache<string | number, string>(
+    new MapStore<string | number>(),
+    new MapStore<string>(),
+    {ttl: 10_000, staleRatio: 0.4},
+);
+
+// A narrower L2 type can populate L1 without conversion.
+void mixedCache.get('n');
+void mixedCache.get('n', undefined);
+void mixedCache.get('n', optionalNumberDeserializer);
+void Promise.resolve(mixedCache.get('n', Number)).then((result) => {
     const value: string | number | undefined = result.value;
     // @ts-expect-error an L1 hit can return a string without deserialization
     const numberOnly: number | undefined = result.value;
     if (typeof value === 'number') value.toFixed();
 });
+
+const dateCache = new FlashCache<Date, string>(
+    new MapStore<Date>(),
+    new MapStore<string>(),
+    {ttl: 10_000, staleRatio: 0.4},
+);
+const deserializeDate = (value: string): Date => new Date(value);
+declare const optionalDateDeserializer: CacheValueDeserializer<string, Date> | undefined;
+
+// @ts-expect-error raw strings cannot be promoted into a Date L1
+void dateCache.get('updatedAt');
+// @ts-expect-error explicit undefined cannot bypass the required deserializer
+void dateCache.get('updatedAt', undefined);
+// @ts-expect-error the deserializer must be present when L2 is incompatible with L1
+void dateCache.get('updatedAt', optionalDateDeserializer);
+void Promise.resolve(dateCache.get('updatedAt', deserializeDate)).then((result) => {
+    const value: Date | undefined = result.value;
+    value?.getTime();
+});
+
+const unionStoredCache = new FlashCache<number, number | string>(
+    new MapStore<number>(),
+    new MapStore<number | string>(),
+    {ttl: 10_000, staleRatio: 0.4},
+);
+
+// @ts-expect-error every L2 union member must be assignable to L1
+void unionStoredCache.get('n');
+// @ts-expect-error explicit undefined must not distribute the L2 union check
+void unionStoredCache.get('n', undefined);
+void unionStoredCache.get('n', Number);
+
+const unionStoredMemo = new FlashMemo(unionStoredCache);
+// @ts-expect-error memoize must not read an incompatible L2 without deserialization
+void unionStoredMemo.memoize('n', () => 42);
+// @ts-expect-error ordinary options cannot bypass the required deserializer
+void unionStoredMemo.memoize('n', () => 42, {useClones: false});
+void unionStoredMemo.memoize('n', () => 42, {serialize: String, deserialize: Number});
 
 void stringCache.set('name', 'alice');
 void stringCache.set('name', 'alice', (value) => value.toUpperCase());
@@ -122,7 +184,15 @@ const sharedCache = new FlashCache<unknown, JsonValue>(
 );
 
 void sharedCache.set('user', new User('alice'), serializeUser);
+void sharedCache.get('user');
+void sharedCache.get('user', undefined);
 void sharedCache.get('user', deserializeUser);
+void sharedCache.get('count', Number);
+void sharedCache.get('count', (value) => String(value));
+void Promise.resolve(sharedCache.get('user')).then((result) => {
+    // @ts-expect-error unconverted shared-cache reads also remain unknown
+    const user: User | undefined = result.value;
+});
 
 void Promise.resolve(sharedCache.get('user', deserializeUser)).then((result) => {
     // @ts-expect-error the value in a shared L1 remains unknown
@@ -134,6 +204,11 @@ const userCache = new FlashCache<User, JsonValue>(
     jsonRedisStore,
     {ttl: 10_000, staleRatio: 0.4, namespace: 'types'},
 );
+
+// @ts-expect-error raw JSON cannot be promoted into a User L1
+void userCache.get('user');
+// @ts-expect-error the optional-deserializer overload must not permit raw JSON here
+void userCache.get('user', undefined);
 
 void Promise.resolve(userCache.get('user', deserializeUser)).then((result) => {
     const user: User | undefined = result.value;
