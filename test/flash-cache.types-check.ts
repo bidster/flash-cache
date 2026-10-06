@@ -4,6 +4,8 @@ import {
     type SettledCacheResult,
     type CacheValueSerializer,
     type SerializedMemoizeOptions,
+    type MaterializedMemoizeOptions,
+    type MemoizeMaterializer,
     type JsonValue,
     FlashCache,
     FlashMemo,
@@ -250,3 +252,42 @@ void Promise.resolve(userCache.get('user', deserializeUser)).then(async (result)
 const incompleteRevalidation: CacheResult<string> = {value: 'old', state: 'revalidating'};
 // @ts-expect-error a fresh result cannot carry a background check
 const unexpectedRevalidation: CacheResult<string> = {value: 'fresh', state: 'fresh', revalidation: Promise.resolve({value: 'new', state: 'fresh'})};
+
+const materializeUser: MemoizeMaterializer<string, User> = (name) => new User(name);
+const materializedOptions: MaterializedMemoizeOptions<string, User> = {materialize: materializeUser};
+void Promise.resolve(stringMemo.memoize('name', () => 'alice', materializedOptions)).then((user) => {
+    const restored: User = user;
+    restored.greeting();
+    // @ts-expect-error materialized results have their own type, not the cached string type
+    const raw: string = user;
+});
+void Promise.resolve(stringMemo.memoize('name', () => 'alice', {materialize: (name) => name.length})).then((size) => {
+    const count: number = size;
+});
+
+const userDataCache = new FlashCache<{name: string}, string>(
+    new MapStore<{name: string}>(), new MapStore<string>(), {ttl: 10_000, staleRatio: 0.4},
+);
+const userDataMemo = new FlashMemo(userDataCache);
+void Promise.resolve(userDataMemo.memoize('user', () => ({name: 'alice'}), {
+    serialize: JSON.stringify,
+    deserialize: (stored): {name: string} => JSON.parse(stored),
+    materialize: (data) => new User(data.name),
+})).then((user) => {
+    const restored: User = user;
+    restored.greeting();
+});
+
+// @ts-expect-error a materializer cannot replace required L2 deserialization
+void userDataMemo.memoize('user', () => ({name: 'alice'}), {materialize: (data: {name: string}) => new User(data.name)});
+// @ts-expect-error materializers must accept the local cached type
+void stringMemo.memoize('name', () => 'alice', {materialize: (value: number) => value});
+// @ts-expect-error a loader returning a string does not narrow a string-or-number L1 for materialization
+void new FlashMemo(mixedCache).memoize('name', () => 'alice', {materialize: (value: string) => value.length});
+// @ts-expect-error materialization must be synchronous
+void stringMemo.memoize('name', () => 'alice', {materialize: async (value: string) => new User(value)});
+const asynchronousMaterialization = {materialize: async (value: string) => new User(value)};
+// @ts-expect-error options variables cannot bypass synchronous materialization
+void stringMemo.memoize('name', () => 'alice', asynchronousMaterialization);
+// @ts-expect-error result unions must not contain promises
+void stringMemo.memoize('name', () => 'alice', {materialize: (value: string) => value ? new User(value) : Promise.resolve(new User(value))});

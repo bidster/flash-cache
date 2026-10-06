@@ -4,7 +4,7 @@
 
 Two-level caching for Node.js with synchronous local reads, asynchronous secondary storage, and stale-while-revalidate memoization.
 
-`FlashCache` manages entries in **L1** (a synchronous store) and **L2** (a synchronous or asynchronous store). `FlashMemo` adds source loading, deduplicates concurrent loads, and clones returned values by default. Use `MapStore` for in-memory storage or `IORedisStore` for a shared Redis L2.
+`FlashCache` manages entries in **L1** (a synchronous store) and **L2** (a synchronous or asynchronous store). `FlashMemo` adds source loading, deduplicates concurrent loads, clones local data by default, and can materialize a separate result for each caller. Use `MapStore` for in-memory storage or `IORedisStore` for a shared Redis L2.
 
 ## Installation
 
@@ -161,7 +161,89 @@ const value = await memo.memoize('42', () => ({ name: 'Igor' }), {
 });
 ```
 
-With `useClones: false`, callers receive shared references and must manage mutations themselves. `structuredClone` preserves supported built-in types and cycles, but does not preserve custom class prototypes or methods. Unsupported values, such as functions, cause cloning errors. To return restored class instances with methods, use `useClones: false`.
+With `useClones: false`, callers receive shared references and must manage mutations themselves. `structuredClone` preserves supported built-in types and cycles, but does not preserve custom class prototypes or methods. Unsupported values, such as functions, cause cloning errors. To return independent class instances with methods, cache their data and create the instances with `materialize` after cloning. Existing class values restored by deserialization can be returned with `useClones: false`, which shares their references.
+
+### Result materialization
+
+`materialize(data)` is an optional synchronous function that turns local cache data into the returned value. Its result type can differ from the L1 and L2 types and is inferred by TypeScript. Without a materializer, `memoize()` returns the local value with the selected cloning behavior.
+
+The three transformations have separate responsibilities:
+
+| Transformation | When it runs | Purpose |
+| --- | --- | --- |
+| `serialize` | Writing local data to L2 | Convert L1 data to the stored L2 representation. |
+| `deserialize` | Reading L2 | Restore the data representation that is promoted into L1. |
+| `materialize` | Returning data to a memo caller, after cloning | Create a result such as a class instance or a view of the data. |
+
+```text
+L1 hit / deserialized L2 / loader result
+                  ↓
+      clone local data (useClones: true)
+                  ↓
+           materialize(data)
+                  ↓
+              caller result
+```
+
+Store data that supports `structuredClone` in L1 and construct class instances at the output boundary:
+
+```typescript
+import { FlashCache, FlashMemo, MapStore } from '@bidster/flash-cache';
+
+type UserData = { name: string; preferences: { theme: string } };
+
+class User {
+  constructor(readonly data: UserData) {}
+
+  greeting(): string {
+    return `Hello, ${this.data.name}`;
+  }
+}
+
+const local = new MapStore<UserData>();
+const cache = new FlashCache<UserData>(
+  local,
+  new MapStore<UserData>(),
+  { ttl: 60_000, staleRatio: 0.8 },
+);
+const memo = new FlashMemo(cache);
+const loadUser = (): UserData => ({
+  name: 'Igor', preferences: { theme: 'light' },
+});
+const materializeUser = (data: UserData): User => new User(data);
+
+const user = await memo.memoize('42', loadUser, { materialize: materializeUser });
+user.data.preferences.theme = 'dark';
+console.log(user.greeting()); // Hello, Igor; the method is preserved.
+
+const next = await memo.memoize('42', loadUser, { materialize: materializeUser });
+console.log(next.data.preferences.theme); // light; cached data was not mutated.
+```
+
+The class instance is created after cloning and is not cloned again. Only `UserData` is cached. A fresh or usable stale L1 hit still returns synchronously. L2 and source-loading paths retain their existing asynchronous behavior.
+
+Materialization runs once per caller on every successful return path, including cache hits, stale values, and loader results. Concurrent callers sharing a load each clone the data and run their own materializer. Background refreshes store data without materializing an unused result. Callers may use different materializers for the same key while keeping the loader, cached data types, and serialization consistent.
+
+Serialization and materialization can be combined when L2 has a different representation:
+
+```typescript
+const serializedCache = new FlashCache<UserData, string>(
+  new MapStore<UserData>(),
+  new MapStore<string>(),
+  { ttl: 60_000, staleRatio: 0.8 },
+);
+const serializedMemo = new FlashMemo(serializedCache);
+const serializedUser = await serializedMemo.memoize('42', loadUser, {
+  serialize: JSON.stringify,
+  deserialize: (stored: string): UserData => JSON.parse(stored),
+  materialize: materializeUser,
+});
+console.log(serializedUser.greeting());
+```
+
+Here L2 stores a JSON string, L1 stores `UserData`, and callers receive `User`. A materializer does not replace a required deserializer. It must accept the entire local L1 value type: a loader returning a narrower type does not narrow existing L1 hits. Reusable options can be typed as `MaterializedMemoizeOptions<UserData, User>`; the callback type is `MemoizeMaterializer<UserData, User>`.
+
+With `useClones: false`, materialization still runs but receives the shared local data. Mutating it, or retaining it inside a returned instance, can expose mutations to other readers. Materialization errors propagate to the caller; the library does not return an unmaterialized value on failure.
 
 ## Serialization
 
@@ -214,7 +296,7 @@ All operations on the same key must use consistent value types and transformatio
 - L2 read errors are treated as an absent L2 entry. An unexpired L1 value can still be returned; otherwise the result is `miss` or `expired`.
 - L1 errors, serializer errors, and deserializer errors propagate. A serializer failure occurs before either store is changed; an L1 write or deletion failure prevents the corresponding L2 operation.
 - Loader errors propagate to callers waiting for a value on a miss or expiry. Background refresh errors are suppressed when a usable cached value has already been returned. Failed loads do not write a replacement or extend the previous TTL; later calls can try again.
-- Cloning errors propagate to the caller, including a synchronous throw on a synchronous hit. Cloning a loader result happens after the write, so a clone failure does not roll back the cached value.
+- Cloning and materialization errors propagate to the caller, including a synchronous throw on a synchronous hit. Both run after a loader result has been written, so their failure does not roll back the cached data. A cloning failure prevents materialization; a materialization failure affects that caller's result, not other callers sharing the load.
 
 Suppressed errors are not logged by the library. Add logging or metrics in a loader or store adapter when needed. There is no automatic retry schedule or configurable L2 error policy.
 
