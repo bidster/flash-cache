@@ -639,7 +639,7 @@ describe('FlashCache (time-driven tests, no mocks)', () => {
             await expect(cache.set('k', 'new')).resolves.toBeUndefined();
         } else {
             l2.delete.mockRejectedValueOnce(failure);
-            await expect(cache.del('k')).resolves.toBeUndefined();
+            await expect(cache.del('k')).rejects.toBe(failure);
         }
         l1.clear();
         expect(await cache.get('k')).toEqual({ value: 'fresh', state: 'fresh' });

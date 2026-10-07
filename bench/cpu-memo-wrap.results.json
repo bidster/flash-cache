@@ -1,0 +1,1835 @@
+{
+  "metadata": {
+    "recordedAt": "2026-09-30T23:00:50.769Z",
+    "node": "v22.22.0",
+    "platform": "darwin",
+    "arch": "arm64",
+    "os": "25.5.0",
+    "cpu": "Apple M4 Max",
+    "gitHead": "c83385ae5eb7696186e05f96f6cc9bde7cf10e2c",
+    "packageVersions": {
+      "cacheable": "2.5.0",
+      "cache-manager": "7.2.9",
+      "keyv": "5.6.0",
+      "@cacheable/utils": "2.5.0"
+    },
+    "sourceSha256": {
+      "src/flash-cache.ts": "15184b02daa244c1c017c5d209f3ba2602c69d7869c712508b97d952eceef615",
+      "src/flash-memo.ts": "3bdb1470573995f2b4a7a5f6a3d7a6e912108f2a16f0aa88bc689abf3d24bb0e",
+      "src/utils/singleflight.ts": "e60ad614738cfd55ceabbce07af90c83e4beb37cda22fafbe67a6c8b81554877",
+      "bench/cpu-memo-wrap.bench.mjs": "6c7f1b0dadd8cee14ff7f81aa70c134b1269215585206f44367e234b2b205495"
+    },
+    "stores": [
+      "Map",
+      "Map"
+    ],
+    "useClones": false,
+    "valueSerialization": false,
+    "ttl": 3600000,
+    "payload": "object with id and 256-character string",
+    "cpuTargetUsPerWorker": 400000,
+    "repetitions": 3,
+    "samplingIntervalUs": 1000,
+    "profileDirectory": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z",
+    "notes": [
+      "CPU metrics exclude setup, warmup and store verification; include user+system CPU across process threads and GC during requests.",
+      "Each worker has its own process. Workers run sequentially, library order rotates between repetitions.",
+      "Primary CPU comparison is unprofiled. Profiles capture one larger trace after warmup; profile CPU is reported separately.",
+      "Keyv + Map has no clone layer; serialize/deserialize are undefined. Returned objects and both stores checked by identity.",
+      "L2/SWR use unique keys per trace. Cacheable custom createKey still includes standard argument hashing overhead.",
+      "SWR blocks loaders until foreground trace completes, then waits one event-loop turn and verifies both updated stores.",
+      "No Redis, I/O, eviction, concurrency or default-cloning scenario. Hot CPU includes common loop and identity checks."
+    ]
+  },
+  "summary": [
+    {
+      "scenario": "l1",
+      "library": "flash-memo",
+      "cpuNsPerOp": 53.31491344873502,
+      "cpuMsPerMillion": 53.31491344873502,
+      "rangeCpuNsPerOp": [
+        53.30905459387483,
+        58.8975
+      ],
+      "cpuRelativeToFlash": 1
+    },
+    {
+      "scenario": "l1",
+      "library": "cacheable",
+      "cpuNsPerOp": 1241.590909090909,
+      "cpuMsPerMillion": 1241.590909090909,
+      "rangeCpuNsPerOp": [
+        1237.7969696969697,
+        1265.825
+      ],
+      "cpuRelativeToFlash": 23.28787254404457
+    },
+    {
+      "scenario": "l1",
+      "library": "cache-manager",
+      "cpuNsPerOp": 456.86136363636365,
+      "cpuMsPerMillion": 456.86136363636365,
+      "rangeCpuNsPerOp": [
+        437.6760869565217,
+        471.66818181818184
+      ],
+      "cpuRelativeToFlash": 8.56911010604301
+    },
+    {
+      "scenario": "l2",
+      "library": "flash-memo",
+      "cpuNsPerOp": 805.827487244898,
+      "cpuMsPerMillion": 805.827487244898,
+      "rangeCpuNsPerOp": [
+        776.6914140159046,
+        837.3678399357601
+      ],
+      "cpuRelativeToFlash": 1
+    },
+    {
+      "scenario": "l2",
+      "library": "cacheable",
+      "cpuNsPerOp": 1795.4907898509175,
+      "cpuMsPerMillion": 1795.4907898509175,
+      "rangeCpuNsPerOp": [
+        1734.1330199115043,
+        1805.2320348502303
+      ],
+      "cpuRelativeToFlash": 2.228132966758991
+    },
+    {
+      "scenario": "l2",
+      "library": "cache-manager",
+      "cpuNsPerOp": 999.595990640863,
+      "cpuMsPerMillion": 999.595990640863,
+      "rangeCpuNsPerOp": [
+        975.978023690773,
+        1037.2339884440105
+      ],
+      "cpuRelativeToFlash": 1.2404590392646622
+    },
+    {
+      "scenario": "mixed",
+      "library": "flash-memo",
+      "cpuNsPerOp": 178.89464285714286,
+      "cpuMsPerMillion": 178.89464285714286,
+      "rangeCpuNsPerOp": [
+        166.01286307053942,
+        185.36574074074073
+      ],
+      "cpuRelativeToFlash": 1
+    },
+    {
+      "scenario": "mixed",
+      "library": "cacheable",
+      "cpuNsPerOp": 1401.0655172413792,
+      "cpuMsPerMillion": 1401.0655172413792,
+      "rangeCpuNsPerOp": [
+        1400.7827586206897,
+        1422.6965517241379
+      ],
+      "cpuRelativeToFlash": 7.831791354200621
+    },
+    {
+      "scenario": "mixed",
+      "library": "cache-manager",
+      "cpuNsPerOp": 538.924,
+      "cpuMsPerMillion": 538.924,
+      "rangeCpuNsPerOp": [
+        516.8064102564102,
+        543.7891891891892
+      ],
+      "cpuRelativeToFlash": 3.012521735658458
+    },
+    {
+      "scenario": "cold",
+      "library": "flash-memo",
+      "cpuNsPerOp": 1159.3916666666667,
+      "cpuMsPerMillion": 1159.3916666666667,
+      "rangeCpuNsPerOp": [
+        1137.838888888889,
+        1201.3970588235295
+      ],
+      "cpuRelativeToFlash": 1
+    },
+    {
+      "scenario": "cold",
+      "library": "cacheable",
+      "cpuNsPerOp": 2872.55,
+      "cpuMsPerMillion": 2872.55,
+      "rangeCpuNsPerOp": [
+        2872,
+        2975.3625
+      ],
+      "cpuRelativeToFlash": 2.4776355416274343
+    },
+    {
+      "scenario": "cold",
+      "library": "cache-manager",
+      "cpuNsPerOp": 1310.616129032258,
+      "cpuMsPerMillion": 1310.616129032258,
+      "rangeCpuNsPerOp": [
+        1302.9625,
+        1334.62
+      ],
+      "cpuRelativeToFlash": 1.13043431888757
+    },
+    {
+      "scenario": "swr",
+      "library": "flash-memo",
+      "cpuNsPerOp": 1651.1240770042193,
+      "cpuMsPerMillion": 1651.1240770042193,
+      "rangeCpuNsPerOp": [
+        1649.8178731540083,
+        1768.4884049773755
+      ],
+      "cpuRelativeToFlash": 1
+    },
+    {
+      "scenario": "swr",
+      "library": "cache-manager",
+      "cpuNsPerOp": 2397.107457822086,
+      "cpuMsPerMillion": 2397.107457822086,
+      "rangeCpuNsPerOp": [
+        2397.0954754601225,
+        2534.4884072580644
+      ],
+      "cpuRelativeToFlash": 1.451803344889362
+    }
+  ],
+  "runs": [
+    {
+      "repetition": 1,
+      "library": "flash-memo",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 6800000,
+      "operationsPerSample": 10000,
+      "samples": 680,
+      "cpuNsPerOp": 58.8975,
+      "userNsPerOp": 57.83367647058824,
+      "systemNsPerOp": 1.0638235294117646,
+      "wallNsPerOp": 55.342245294117646,
+      "cpuUs": 400503
+    },
+    {
+      "repetition": 1,
+      "library": "cacheable",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 320000,
+      "operationsPerSample": 10000,
+      "samples": 32,
+      "cpuNsPerOp": 1265.825,
+      "userNsPerOp": 1236.05,
+      "systemNsPerOp": 29.775,
+      "wallNsPerOp": 1180.959765625,
+      "cpuUs": 405064
+    },
+    {
+      "repetition": 1,
+      "library": "cache-manager",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 880000,
+      "operationsPerSample": 10000,
+      "samples": 88,
+      "cpuNsPerOp": 471.66818181818184,
+      "userNsPerOp": 445.97727272727275,
+      "systemNsPerOp": 25.69090909090909,
+      "wallNsPerOp": 415.4724875,
+      "cpuUs": 415068
+    },
+    {
+      "repetition": 1,
+      "library": "flash-memo",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 501760,
+      "operationsPerSample": 1024,
+      "samples": 490,
+      "cpuNsPerOp": 805.827487244898,
+      "userNsPerOp": 769.921875,
+      "systemNsPerOp": 35.90561224489796,
+      "wallNsPerOp": 615.3449776785715,
+      "cpuUs": 404332
+    },
+    {
+      "repetition": 1,
+      "library": "cacheable",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 223232,
+      "operationsPerSample": 1024,
+      "samples": 218,
+      "cpuNsPerOp": 1795.4907898509175,
+      "userNsPerOp": 1728.538023222477,
+      "systemNsPerOp": 66.95276662844037,
+      "wallNsPerOp": 1578.2457846545299,
+      "cpuUs": 400811
+    },
+    {
+      "repetition": 1,
+      "library": "cache-manager",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 403456,
+      "operationsPerSample": 1024,
+      "samples": 394,
+      "cpuNsPerOp": 999.595990640863,
+      "userNsPerOp": 956.9097993337564,
+      "systemNsPerOp": 42.6861913071066,
+      "wallNsPerOp": 853.0033981400697,
+      "cpuUs": 403293
+    },
+    {
+      "repetition": 1,
+      "library": "flash-memo",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 2160000,
+      "operationsPerSample": 10000,
+      "samples": 216,
+      "cpuNsPerOp": 185.36574074074073,
+      "userNsPerOp": 177.83194444444445,
+      "systemNsPerOp": 7.5337962962962965,
+      "wallNsPerOp": 149.10345092592593,
+      "cpuUs": 400390
+    },
+    {
+      "repetition": 1,
+      "library": "cacheable",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 290000,
+      "operationsPerSample": 10000,
+      "samples": 29,
+      "cpuNsPerOp": 1400.7827586206897,
+      "userNsPerOp": 1366.3379310344828,
+      "systemNsPerOp": 34.4448275862069,
+      "wallNsPerOp": 1264.6512931034483,
+      "cpuUs": 406227
+    },
+    {
+      "repetition": 1,
+      "library": "cache-manager",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 780000,
+      "operationsPerSample": 10000,
+      "samples": 78,
+      "cpuNsPerOp": 516.8064102564102,
+      "userNsPerOp": 492.60128205128206,
+      "systemNsPerOp": 24.205128205128204,
+      "wallNsPerOp": 465.1169858974359,
+      "cpuUs": 403109
+    },
+    {
+      "repetition": 1,
+      "library": "flash-memo",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 360000,
+      "operationsPerSample": 10000,
+      "samples": 36,
+      "cpuNsPerOp": 1137.838888888889,
+      "userNsPerOp": 1089.5666666666666,
+      "systemNsPerOp": 48.272222222222226,
+      "wallNsPerOp": 855.1270722222222,
+      "cpuUs": 409622
+    },
+    {
+      "repetition": 1,
+      "library": "cacheable",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 160000,
+      "operationsPerSample": 10000,
+      "samples": 16,
+      "cpuNsPerOp": 2872.55,
+      "userNsPerOp": 2791.58125,
+      "systemNsPerOp": 80.96875,
+      "wallNsPerOp": 2399.46303125,
+      "cpuUs": 459608
+    },
+    {
+      "repetition": 1,
+      "library": "cache-manager",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 300000,
+      "operationsPerSample": 10000,
+      "samples": 30,
+      "cpuNsPerOp": 1334.62,
+      "userNsPerOp": 1261.14,
+      "systemNsPerOp": 73.48,
+      "wallNsPerOp": 1130.46,
+      "cpuUs": 400386
+    },
+    {
+      "repetition": 1,
+      "library": "flash-memo",
+      "scenario": "swr",
+      "kind": "measure",
+      "operations": 242688,
+      "operationsPerSample": 1024,
+      "samples": 237,
+      "cpuNsPerOp": 1651.1240770042193,
+      "userNsPerOp": 1583.267405063291,
+      "systemNsPerOp": 67.85667194092827,
+      "wallNsPerOp": 1132.388943829114,
+      "cpuUs": 400708
+    },
+    {
+      "repetition": 1,
+      "library": "cache-manager",
+      "scenario": "swr",
+      "kind": "measure",
+      "operations": 166912,
+      "operationsPerSample": 1024,
+      "samples": 163,
+      "cpuNsPerOp": 2397.0954754601225,
+      "userNsPerOp": 2321.876198236196,
+      "systemNsPerOp": 75.21927722392638,
+      "wallNsPerOp": 1735.744757716641,
+      "cpuUs": 400104
+    },
+    {
+      "repetition": 2,
+      "library": "cacheable",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 330000,
+      "operationsPerSample": 10000,
+      "samples": 33,
+      "cpuNsPerOp": 1237.7969696969697,
+      "userNsPerOp": 1210.7515151515152,
+      "systemNsPerOp": 27.045454545454547,
+      "wallNsPerOp": 1151.4901545454545,
+      "cpuUs": 408473
+    },
+    {
+      "repetition": 2,
+      "library": "cache-manager",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 920000,
+      "operationsPerSample": 10000,
+      "samples": 92,
+      "cpuNsPerOp": 437.6760869565217,
+      "userNsPerOp": 417.4489130434783,
+      "systemNsPerOp": 20.22717391304348,
+      "wallNsPerOp": 392.22319239130434,
+      "cpuUs": 402662
+    },
+    {
+      "repetition": 2,
+      "library": "flash-memo",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 7510000,
+      "operationsPerSample": 10000,
+      "samples": 751,
+      "cpuNsPerOp": 53.30905459387483,
+      "userNsPerOp": 52.43661784287617,
+      "systemNsPerOp": 0.8724367509986685,
+      "wallNsPerOp": 49.712306524633824,
+      "cpuUs": 400351
+    },
+    {
+      "repetition": 2,
+      "library": "cacheable",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 231424,
+      "operationsPerSample": 1024,
+      "samples": 226,
+      "cpuNsPerOp": 1734.1330199115043,
+      "userNsPerOp": 1672.8602046460178,
+      "systemNsPerOp": 61.27281526548673,
+      "wallNsPerOp": 1531.240649198009,
+      "cpuUs": 401320
+    },
+    {
+      "repetition": 2,
+      "library": "cache-manager",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 393216,
+      "operationsPerSample": 1024,
+      "samples": 384,
+      "cpuNsPerOp": 1037.2339884440105,
+      "userNsPerOp": 987.0503743489584,
+      "systemNsPerOp": 50.183614095052086,
+      "wallNsPerOp": 877.6161524454752,
+      "cpuUs": 407857
+    },
+    {
+      "repetition": 2,
+      "library": "flash-memo",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 515072,
+      "operationsPerSample": 1024,
+      "samples": 503,
+      "cpuNsPerOp": 776.6914140159046,
+      "userNsPerOp": 749.2467072564613,
+      "systemNsPerOp": 27.44470675944334,
+      "wallNsPerOp": 605.2666035039762,
+      "cpuUs": 400052
+    },
+    {
+      "repetition": 2,
+      "library": "cacheable",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 290000,
+      "operationsPerSample": 10000,
+      "samples": 29,
+      "cpuNsPerOp": 1401.0655172413792,
+      "userNsPerOp": 1373.0931034482758,
+      "systemNsPerOp": 27.97241379310345,
+      "wallNsPerOp": 1259.9749931034482,
+      "cpuUs": 406309
+    },
+    {
+      "repetition": 2,
+      "library": "cache-manager",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 750000,
+      "operationsPerSample": 10000,
+      "samples": 75,
+      "cpuNsPerOp": 538.924,
+      "userNsPerOp": 511.2973333333333,
+      "systemNsPerOp": 27.626666666666665,
+      "wallNsPerOp": 479.336776,
+      "cpuUs": 404193
+    },
+    {
+      "repetition": 2,
+      "library": "flash-memo",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 2410000,
+      "operationsPerSample": 10000,
+      "samples": 241,
+      "cpuNsPerOp": 166.01286307053942,
+      "userNsPerOp": 161.8,
+      "systemNsPerOp": 4.212863070539419,
+      "wallNsPerOp": 142.83772697095435,
+      "cpuUs": 400091
+    },
+    {
+      "repetition": 2,
+      "library": "cacheable",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 160000,
+      "operationsPerSample": 10000,
+      "samples": 16,
+      "cpuNsPerOp": 2975.3625,
+      "userNsPerOp": 2888.6625,
+      "systemNsPerOp": 86.7,
+      "wallNsPerOp": 2474.26120625,
+      "cpuUs": 476058
+    },
+    {
+      "repetition": 2,
+      "library": "cache-manager",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 320000,
+      "operationsPerSample": 10000,
+      "samples": 32,
+      "cpuNsPerOp": 1302.9625,
+      "userNsPerOp": 1243.075,
+      "systemNsPerOp": 59.8875,
+      "wallNsPerOp": 1095.756109375,
+      "cpuUs": 416948
+    },
+    {
+      "repetition": 2,
+      "library": "flash-memo",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 340000,
+      "operationsPerSample": 10000,
+      "samples": 34,
+      "cpuNsPerOp": 1201.3970588235295,
+      "userNsPerOp": 1148.0647058823529,
+      "systemNsPerOp": 53.332352941176474,
+      "wallNsPerOp": 892.455144117647,
+      "cpuUs": 408475
+    },
+    {
+      "repetition": 2,
+      "library": "cache-manager",
+      "scenario": "swr",
+      "kind": "measure",
+      "operations": 158720,
+      "operationsPerSample": 1024,
+      "samples": 155,
+      "cpuNsPerOp": 2534.4884072580644,
+      "userNsPerOp": 2434.507308467742,
+      "systemNsPerOp": 99.98109879032258,
+      "wallNsPerOp": 1803.6962953629031,
+      "cpuUs": 402274
+    },
+    {
+      "repetition": 2,
+      "library": "flash-memo",
+      "scenario": "swr",
+      "kind": "measure",
+      "operations": 226304,
+      "operationsPerSample": 1024,
+      "samples": 221,
+      "cpuNsPerOp": 1768.4884049773755,
+      "userNsPerOp": 1691.7730132918552,
+      "systemNsPerOp": 76.71539168552036,
+      "wallNsPerOp": 1204.5112282593325,
+      "cpuUs": 400216
+    },
+    {
+      "repetition": 3,
+      "library": "cache-manager",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 880000,
+      "operationsPerSample": 10000,
+      "samples": 88,
+      "cpuNsPerOp": 456.86136363636365,
+      "userNsPerOp": 430.9522727272727,
+      "systemNsPerOp": 25.90909090909091,
+      "wallNsPerOp": 402.56396704545455,
+      "cpuUs": 402038
+    },
+    {
+      "repetition": 3,
+      "library": "flash-memo",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 7510000,
+      "operationsPerSample": 10000,
+      "samples": 751,
+      "cpuNsPerOp": 53.31491344873502,
+      "userNsPerOp": 52.4051930758988,
+      "systemNsPerOp": 0.9097203728362184,
+      "wallNsPerOp": 49.58244886817577,
+      "cpuUs": 400395
+    },
+    {
+      "repetition": 3,
+      "library": "cacheable",
+      "scenario": "l1",
+      "kind": "measure",
+      "operations": 330000,
+      "operationsPerSample": 10000,
+      "samples": 33,
+      "cpuNsPerOp": 1241.590909090909,
+      "userNsPerOp": 1217.8454545454545,
+      "systemNsPerOp": 23.745454545454546,
+      "wallNsPerOp": 1152.5953272727272,
+      "cpuUs": 409725
+    },
+    {
+      "repetition": 3,
+      "library": "cache-manager",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 410624,
+      "operationsPerSample": 1024,
+      "samples": 401,
+      "cpuNsPerOp": 975.978023690773,
+      "userNsPerOp": 939.6771742518703,
+      "systemNsPerOp": 36.300849438902745,
+      "wallNsPerOp": 843.295082605985,
+      "cpuUs": 400760
+    },
+    {
+      "repetition": 3,
+      "library": "flash-memo",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 478208,
+      "operationsPerSample": 1024,
+      "samples": 467,
+      "cpuNsPerOp": 837.3678399357601,
+      "userNsPerOp": 798.8427629817987,
+      "systemNsPerOp": 38.52507695396146,
+      "wallNsPerOp": 641.5783236583244,
+      "cpuUs": 400436
+    },
+    {
+      "repetition": 3,
+      "library": "cacheable",
+      "scenario": "l2",
+      "kind": "measure",
+      "operations": 222208,
+      "operationsPerSample": 1024,
+      "samples": 217,
+      "cpuNsPerOp": 1805.2320348502303,
+      "userNsPerOp": 1741.5619599654378,
+      "systemNsPerOp": 63.670074884792626,
+      "wallNsPerOp": 1598.564705141129,
+      "cpuUs": 401137
+    },
+    {
+      "repetition": 3,
+      "library": "cache-manager",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 740000,
+      "operationsPerSample": 10000,
+      "samples": 74,
+      "cpuNsPerOp": 543.7891891891892,
+      "userNsPerOp": 517.1364864864864,
+      "systemNsPerOp": 26.6527027027027,
+      "wallNsPerOp": 482.135472972973,
+      "cpuUs": 402404
+    },
+    {
+      "repetition": 3,
+      "library": "flash-memo",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 2240000,
+      "operationsPerSample": 10000,
+      "samples": 224,
+      "cpuNsPerOp": 178.89464285714286,
+      "userNsPerOp": 172.95982142857142,
+      "systemNsPerOp": 5.9348214285714285,
+      "wallNsPerOp": 146.33150982142857,
+      "cpuUs": 400724
+    },
+    {
+      "repetition": 3,
+      "library": "cacheable",
+      "scenario": "mixed",
+      "kind": "measure",
+      "operations": 290000,
+      "operationsPerSample": 10000,
+      "samples": 29,
+      "cpuNsPerOp": 1422.6965517241379,
+      "userNsPerOp": 1385.7137931034483,
+      "systemNsPerOp": 36.98275862068966,
+      "wallNsPerOp": 1279.3795862068966,
+      "cpuUs": 412582
+    },
+    {
+      "repetition": 3,
+      "library": "cache-manager",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 310000,
+      "operationsPerSample": 10000,
+      "samples": 31,
+      "cpuNsPerOp": 1310.616129032258,
+      "userNsPerOp": 1260.816129032258,
+      "systemNsPerOp": 49.8,
+      "wallNsPerOp": 1121.4669290322581,
+      "cpuUs": 406291
+    },
+    {
+      "repetition": 3,
+      "library": "flash-memo",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 360000,
+      "operationsPerSample": 10000,
+      "samples": 36,
+      "cpuNsPerOp": 1159.3916666666667,
+      "userNsPerOp": 1113.2694444444444,
+      "systemNsPerOp": 46.12222222222222,
+      "wallNsPerOp": 872.155325,
+      "cpuUs": 417381
+    },
+    {
+      "repetition": 3,
+      "library": "cacheable",
+      "scenario": "cold",
+      "kind": "measure",
+      "operations": 160000,
+      "operationsPerSample": 10000,
+      "samples": 16,
+      "cpuNsPerOp": 2872,
+      "userNsPerOp": 2757.46875,
+      "systemNsPerOp": 114.53125,
+      "wallNsPerOp": 2407.20833125,
+      "cpuUs": 459520
+    },
+    {
+      "repetition": 3,
+      "library": "cache-manager",
+      "scenario": "swr",
+      "kind": "measure",
+      "operations": 166912,
+      "operationsPerSample": 1024,
+      "samples": 163,
+      "cpuNsPerOp": 2397.107457822086,
+      "userNsPerOp": 2329.766583588957,
+      "systemNsPerOp": 67.34087423312883,
+      "wallNsPerOp": 1746.7550685391104,
+      "cpuUs": 400106
+    },
+    {
+      "repetition": 3,
+      "library": "flash-memo",
+      "scenario": "swr",
+      "kind": "measure",
+      "operations": 242688,
+      "operationsPerSample": 1024,
+      "samples": 237,
+      "cpuNsPerOp": 1649.8178731540083,
+      "userNsPerOp": 1579.6537117616033,
+      "systemNsPerOp": 70.16416139240506,
+      "wallNsPerOp": 1139.5181220332279,
+      "cpuUs": 400391
+    }
+  ],
+  "profiles": [
+    {
+      "library": "flash-memo",
+      "scenario": "l1",
+      "kind": "profile",
+      "operations": 5000000,
+      "operationsPerSample": 5000000,
+      "samples": 823,
+      "cpuNsPerOp": 207.9556,
+      "userNsPerOp": 205.4822,
+      "systemNsPerOp": 2.4734,
+      "wallNsPerOp": 206.6600334,
+      "cpuUs": 1039778,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/l1-flash-memo.cpuprofile",
+      "sampledUs": 1214625,
+      "topSelf": [
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:57",
+          "selfPercent": 79.92853761449007
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 15.001173201605434
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 3.7324277040238756
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 1.0291242152927857
+        },
+        {
+          "frame": "worker file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:56",
+          "selfPercent": 0.30873726458783574
+        }
+      ],
+      "gcPercent": 1.0291242152927857
+    },
+    {
+      "library": "cacheable",
+      "scenario": "l1",
+      "kind": "profile",
+      "operations": 5000000,
+      "operationsPerSample": 5000000,
+      "samples": 5687,
+      "cpuNsPerOp": 1473.4288,
+      "userNsPerOp": 1458.032,
+      "systemNsPerOp": 15.3968,
+      "wallNsPerOp": 1427.101375,
+      "cpuUs": 7367144,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/l1-cacheable.cpuprofile",
+      "sampledUs": 7317208,
+      "topSelf": [
+        {
+          "frame": "hashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:525",
+          "selfPercent": 12.469400897172802
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 8.877484417553799
+        },
+        {
+          "frame": "getRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:606",
+          "selfPercent": 8.009134085022593
+        },
+        {
+          "frame": "encode node:internal/encoding:351",
+          "selfPercent": 7.63843258248228
+        },
+        {
+          "frame": "toHashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:178",
+          "selfPercent": 7.512469236900195
+        },
+        {
+          "frame": "Hookified file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hookified/dist/node/index.js:327",
+          "selfPercent": 7.362753662325849
+        },
+        {
+          "frame": "add file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:523",
+          "selfPercent": 5.39320462121618
+        },
+        {
+          "frame": "getRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cacheable/dist/index.mjs:508",
+          "selfPercent": 5.119247669329613
+        },
+        {
+          "frame": "toHashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:826",
+          "selfPercent": 4.918720364379419
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 4.49738479485618
+        },
+        {
+          "frame": "createWrapKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:740",
+          "selfPercent": 3.3755634662838614
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:59",
+          "selfPercent": 3.256050668506348
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 3.079521588015538
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:731",
+          "selfPercent": 2.9314869824665366
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 2.488421813347386
+        }
+      ],
+      "gcPercent": 4.49738479485618
+    },
+    {
+      "library": "cache-manager",
+      "scenario": "l1",
+      "kind": "profile",
+      "operations": 5000000,
+      "operationsPerSample": 5000000,
+      "samples": 2786,
+      "cpuNsPerOp": 841.3808,
+      "userNsPerOp": 820.6332,
+      "systemNsPerOp": 20.7476,
+      "wallNsPerOp": 699.09885,
+      "cpuUs": 4206904,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/l1-cache-manager.cpuprofile",
+      "sampledUs": 3681959,
+      "topSelf": [
+        {
+          "frame": "hasKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:417",
+          "selfPercent": 36.870155262456755
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 13.822994769903739
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 10.491534533654503
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:498",
+          "selfPercent": 9.416400345576907
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:270",
+          "selfPercent": 7.206109573735069
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 5.911689945488257
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 5.076563861792051
+        },
+        {
+          "frame": "isDataExpired file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:502",
+          "selfPercent": 3.3033773597153036
+        },
+        {
+          "frame": "coalesceAsync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:468",
+          "selfPercent": 3.0057368916927105
+        },
+        {
+          "frame": "removeKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:423",
+          "selfPercent": 2.783762665472375
+        },
+        {
+          "frame": "addKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:420",
+          "selfPercent": 1.3602541473166865
+        },
+        {
+          "frame": "wrap file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:270",
+          "selfPercent": 0.3417474230430051
+        },
+        {
+          "frame": "trigger file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:112",
+          "selfPercent": 0.1697465941364366
+        },
+        {
+          "frame": "getCallbacksByKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:431",
+          "selfPercent": 0.13579727530914928
+        },
+        {
+          "frame": "coalesce file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:448",
+          "selfPercent": 0.10412935070705567
+        }
+      ],
+      "gcPercent": 13.822994769903739
+    },
+    {
+      "library": "flash-memo",
+      "scenario": "l2",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 148,
+      "cpuNsPerOp": 1069.75,
+      "userNsPerOp": 1026.225,
+      "systemNsPerOp": 43.525,
+      "wallNsPerOp": 920.983545,
+      "cpuUs": 213950,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/l2-flash-memo.cpuprofile",
+      "sampledUs": 240208,
+      "topSelf": [
+        {
+          "frame": "(program) :0",
+          "selfPercent": 23.400552854193034
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 23.330197162459203
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:57",
+          "selfPercent": 16.75631119696263
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 9.263638180243788
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:9",
+          "selfPercent": 5.20299074135749
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:86",
+          "selfPercent": 4.75338040365017
+        },
+        {
+          "frame": "read file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:78",
+          "selfPercent": 4.717994404849131
+        },
+        {
+          "frame": "singleFlight file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:6",
+          "selfPercent": 4.180127223073336
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:12",
+          "selfPercent": 2.1156664224338906
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 2.09901418770399
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-memo.js:20",
+          "selfPercent": 2.081529341237594
+        },
+        {
+          "frame": "computeState file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:19",
+          "selfPercent": 1.5782155465263439
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:84",
+          "selfPercent": 0.5203823353093985
+        }
+      ],
+      "gcPercent": 9.263638180243788
+    },
+    {
+      "library": "cacheable",
+      "scenario": "l2",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 315,
+      "cpuNsPerOp": 2071.575,
+      "userNsPerOp": 2044.99,
+      "systemNsPerOp": 26.585,
+      "wallNsPerOp": 1931.37667,
+      "cpuUs": 414315,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/l2-cacheable.cpuprofile",
+      "sampledUs": 432834,
+      "topSelf": [
+        {
+          "frame": "getRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:606",
+          "selfPercent": 14.786038065401517
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 11.369254725830226
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 8.856513120503472
+        },
+        {
+          "frame": "hashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:525",
+          "selfPercent": 8.69294001857525
+        },
+        {
+          "frame": "toHashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:178",
+          "selfPercent": 7.267913333980233
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:705",
+          "selfPercent": 5.80499683481427
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 4.716588807718432
+        },
+        {
+          "frame": "encode node:internal/encoding:351",
+          "selfPercent": 4.052823946362809
+        },
+        {
+          "frame": "add file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:523",
+          "selfPercent": 4.043120457265372
+        },
+        {
+          "frame": "getRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cacheable/dist/index.mjs:508",
+          "selfPercent": 3.76379859253201
+        },
+        {
+          "frame": "processSecondaryForGetRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cacheable/dist/index.mjs:1009",
+          "selfPercent": 3.1864409912345146
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:731",
+          "selfPercent": 1.7521728884514618
+        },
+        {
+          "frame": "Hookified file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hookified/dist/node/index.js:327",
+          "selfPercent": 1.7424693993540248
+        },
+        {
+          "frame": "hook file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hookified/dist/node/index.js:586",
+          "selfPercent": 1.742238363899324
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:59",
+          "selfPercent": 1.742238363899324
+        }
+      ],
+      "gcPercent": 4.716588807718432
+    },
+    {
+      "library": "cache-manager",
+      "scenario": "l2",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 189,
+      "cpuNsPerOp": 1467.89,
+      "userNsPerOp": 1435.66,
+      "systemNsPerOp": 32.23,
+      "wallNsPerOp": 1184.709375,
+      "cpuUs": 293578,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/l2-cache-manager.cpuprofile",
+      "sampledUs": 279791,
+      "topSelf": [
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:498",
+          "selfPercent": 17.55846328152085
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 15.561973044165109
+        },
+        {
+          "frame": "hasKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:417",
+          "selfPercent": 12.5543709411668
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:270",
+          "selfPercent": 11.66084684639606
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 10.364522089702671
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:705",
+          "selfPercent": 8.53351251469847
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:156",
+          "selfPercent": 7.192511553266545
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 6.224288844172972
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 5.390809568570826
+        },
+        {
+          "frame": "coalesceAsync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:468",
+          "selfPercent": 1.369951142102498
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:158",
+          "selfPercent": 1.369951142102498
+        },
+        {
+          "frame": "trigger file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:112",
+          "selfPercent": 1.325274937363961
+        },
+        {
+          "frame": "removeKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:423",
+          "selfPercent": 0.4467620473853698
+        },
+        {
+          "frame": "isDataExpired file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:502",
+          "selfPercent": 0.4467620473853698
+        }
+      ],
+      "gcPercent": 6.224288844172972
+    },
+    {
+      "library": "flash-memo",
+      "scenario": "mixed",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 34,
+      "cpuNsPerOp": 256.14,
+      "userNsPerOp": 249.42,
+      "systemNsPerOp": 6.72,
+      "wallNsPerOp": 211.92042,
+      "cpuUs": 51228,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/mixed-flash-memo.cpuprofile",
+      "sampledUs": 60792,
+      "topSelf": [
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:57",
+          "selfPercent": 33.17377286485064
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 31.870969864455848
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 8.155678378734043
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:10",
+          "selfPercent": 6.23766285037505
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 6.168574812475326
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 6.099486774575602
+        },
+        {
+          "frame": "loader file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:68",
+          "selfPercent": 2.1252796420581657
+        },
+        {
+          "frame": "singleFlight file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:6",
+          "selfPercent": 2.056191604158442
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:86",
+          "selfPercent": 2.056191604158442
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:12",
+          "selfPercent": 2.056191604158442
+        }
+      ],
+      "gcPercent": 8.155678378734043
+    },
+    {
+      "library": "cacheable",
+      "scenario": "mixed",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 231,
+      "cpuNsPerOp": 1594.35,
+      "userNsPerOp": 1568.415,
+      "systemNsPerOp": 25.935,
+      "wallNsPerOp": 1442.501875,
+      "cpuUs": 318870,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/mixed-cacheable.cpuprofile",
+      "sampledUs": 306750,
+      "topSelf": [
+        {
+          "frame": "toHashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:178",
+          "selfPercent": 8.612224938875306
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 8.12322738386308
+        },
+        {
+          "frame": "encode node:internal/encoding:351",
+          "selfPercent": 7.783537082314589
+        },
+        {
+          "frame": "hashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:525",
+          "selfPercent": 7.389079054604727
+        },
+        {
+          "frame": "getRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:606",
+          "selfPercent": 6.153545232273839
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 5.990220048899755
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 5.935778321108394
+        },
+        {
+          "frame": "toHashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:826",
+          "selfPercent": 5.311165444172779
+        },
+        {
+          "frame": "add file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:523",
+          "selfPercent": 4.93039934800326
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:59",
+          "selfPercent": 3.7079054604726975
+        },
+        {
+          "frame": "encodeUtf8String :0",
+          "selfPercent": 3.680847595762021
+        },
+        {
+          "frame": "createWrapKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:740",
+          "selfPercent": 3.286715566422168
+        },
+        {
+          "frame": "getOrSet file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:641",
+          "selfPercent": 2.444987775061125
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:493",
+          "selfPercent": 2.444987775061125
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:705",
+          "selfPercent": 2.09160554197229
+        }
+      ],
+      "gcPercent": 5.990220048899755
+    },
+    {
+      "library": "cache-manager",
+      "scenario": "mixed",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 100,
+      "cpuNsPerOp": 823.175,
+      "userNsPerOp": 795.485,
+      "systemNsPerOp": 27.69,
+      "wallNsPerOp": 621.859375,
+      "cpuUs": 164635,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/mixed-cache-manager.cpuprofile",
+      "sampledUs": 143750,
+      "topSelf": [
+        {
+          "frame": "hasKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:417",
+          "selfPercent": 16.608695652173914
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:498",
+          "selfPercent": 14.667826086956522
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 13.826086956521738
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 13.100521739130436
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:270",
+          "selfPercent": 10.550260869565218
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 8.551652173913043
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 5.188173913043478
+        },
+        {
+          "frame": "loader file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:68",
+          "selfPercent": 4.434782608695652
+        },
+        {
+          "frame": "coalesceAsync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:468",
+          "selfPercent": 4.318608695652174
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:705",
+          "selfPercent": 1.7975652173913044
+        },
+        {
+          "frame": "removeKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:423",
+          "selfPercent": 1.7391304347826086
+        },
+        {
+          "frame": "addKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:420",
+          "selfPercent": 1.6806956521739131
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:156",
+          "selfPercent": 0.8987826086956522
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:95",
+          "selfPercent": 0.8980869565217391
+        },
+        {
+          "frame": "isDataExpired file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:502",
+          "selfPercent": 0.8695652173913043
+        }
+      ],
+      "gcPercent": 8.551652173913043
+    },
+    {
+      "library": "flash-memo",
+      "scenario": "cold",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 256,
+      "cpuNsPerOp": 2039.515,
+      "userNsPerOp": 1963.72,
+      "systemNsPerOp": 75.795,
+      "wallNsPerOp": 1597.588955,
+      "cpuUs": 407903,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/cold-flash-memo.cpuprofile",
+      "sampledUs": 374625,
+      "topSelf": [
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:57",
+          "selfPercent": 19.319052385719054
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 16.282415749082414
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 14.993126459793126
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 14.814814814814815
+        },
+        {
+          "frame": "loader file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:68",
+          "selfPercent": 9.008742075408742
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:112",
+          "selfPercent": 7.085218551885219
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-memo.js:20",
+          "selfPercent": 3.0251584918251586
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:10",
+          "selfPercent": 2.7027027027027026
+        },
+        {
+          "frame": "read file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:78",
+          "selfPercent": 2.6917584250917583
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-memo.js:38",
+          "selfPercent": 2.6914914914914916
+        },
+        {
+          "frame": "singleFlight file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:6",
+          "selfPercent": 2.3468802135468803
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 1.6795462128795462
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:86",
+          "selfPercent": 1.0234234234234234
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:12",
+          "selfPercent": 1.001001001001001
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:84",
+          "selfPercent": 0.667334000667334
+        }
+      ],
+      "gcPercent": 14.993126459793126
+    },
+    {
+      "library": "cacheable",
+      "scenario": "cold",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 535,
+      "cpuNsPerOp": 3972.225,
+      "userNsPerOp": 3847.77,
+      "systemNsPerOp": 124.455,
+      "wallNsPerOp": 3348.67875,
+      "cpuUs": 794445,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/cold-cacheable.cpuprofile",
+      "sampledUs": 704333,
+      "topSelf": [
+        {
+          "frame": "(program) :0",
+          "selfPercent": 14.43990271647076
+        },
+        {
+          "frame": "getRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:606",
+          "selfPercent": 11.87889819162243
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 9.855565478260994
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cacheable/dist/index.mjs:629",
+          "selfPercent": 8.317656563017778
+        },
+        {
+          "frame": "loader file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:68",
+          "selfPercent": 6.93933125382454
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:705",
+          "selfPercent": 5.90402551066044
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 4.998771887729242
+        },
+        {
+          "frame": "toHashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:178",
+          "selfPercent": 3.756461787251201
+        },
+        {
+          "frame": "encode node:internal/encoding:351",
+          "selfPercent": 3.597020159498419
+        },
+        {
+          "frame": "hashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:525",
+          "selfPercent": 3.413442221222064
+        },
+        {
+          "frame": "getRaw file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cacheable/dist/index.mjs:508",
+          "selfPercent": 3.0230019039289653
+        },
+        {
+          "frame": "hasKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:417",
+          "selfPercent": 2.3308577050911996
+        },
+        {
+          "frame": "toHashSync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:826",
+          "selfPercent": 2.3248946166089053
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/hashery/dist/node/index.js:59",
+          "selfPercent": 1.9462384979831984
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:731",
+          "selfPercent": 1.6267873292888448
+        }
+      ],
+      "gcPercent": 9.855565478260994
+    },
+    {
+      "library": "cache-manager",
+      "scenario": "cold",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 287,
+      "cpuNsPerOp": 2023.445,
+      "userNsPerOp": 1961.395,
+      "systemNsPerOp": 62.05,
+      "wallNsPerOp": 1792.766875,
+      "cpuUs": 404689,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/cold-cache-manager.cpuprofile",
+      "sampledUs": 391291,
+      "topSelf": [
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:498",
+          "selfPercent": 19.75256267074888
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 16.32442351089087
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:705",
+          "selfPercent": 14.375234799675944
+        },
+        {
+          "frame": "loader file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:68",
+          "selfPercent": 9.733165342417792
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 8.497512081801013
+        },
+        {
+          "frame": "hasKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:417",
+          "selfPercent": 8.0295738976874
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:156",
+          "selfPercent": 6.432041626308808
+        },
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 5.621902880464923
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:270",
+          "selfPercent": 4.472119215622133
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:158",
+          "selfPercent": 1.9167320485265442
+        },
+        {
+          "frame": "coalesceAsync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:468",
+          "selfPercent": 1.608010406577202
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 1.309511335553335
+        },
+        {
+          "frame": "removeKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:423",
+          "selfPercent": 0.9688441594618838
+        },
+        {
+          "frame": "addKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:420",
+          "selfPercent": 0.3194553414210907
+        },
+        {
+          "frame": "getCallbacksByKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:431",
+          "selfPercent": 0.3194553414210907
+        }
+      ],
+      "gcPercent": 5.621902880464923
+    },
+    {
+      "library": "flash-memo",
+      "scenario": "swr",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 548,
+      "cpuNsPerOp": 7182.435,
+      "userNsPerOp": 7004.62,
+      "systemNsPerOp": 177.815,
+      "wallNsPerOp": 3447.944795,
+      "cpuUs": 1436487,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/swr-flash-memo.cpuprofile",
+      "sampledUs": 731959,
+      "topSelf": [
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 32.99979916907914
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 14.259678479259085
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:57",
+          "selfPercent": 10.34306566351394
+        },
+        {
+          "frame": "singleFlight file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:6",
+          "selfPercent": 8.424788820138833
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:112",
+          "selfPercent": 6.182313490236475
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/utils/singleflight.js:12",
+          "selfPercent": 6.170564198267936
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 5.851967118376849
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-memo.js:20",
+          "selfPercent": 3.1079609650267295
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:86",
+          "selfPercent": 2.7552089666224475
+        },
+        {
+          "frame": "loader file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:68",
+          "selfPercent": 2.7097146151628713
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:9",
+          "selfPercent": 1.5595135793125026
+        },
+        {
+          "frame": "read file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:78",
+          "selfPercent": 1.5369713330937935
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:10",
+          "selfPercent": 1.2067615809082202
+        },
+        {
+          "frame": "computeState file:///Users/mayorovigor/git/bidster/flash-cache/dist/esm/flash-cache.js:19",
+          "selfPercent": 1.1896841216516225
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 0.6945744228843419
+        }
+      ],
+      "gcPercent": 32.99979916907914
+    },
+    {
+      "library": "cache-manager",
+      "scenario": "swr",
+      "kind": "profile",
+      "operations": 200000,
+      "operationsPerSample": 200000,
+      "samples": 977,
+      "cpuNsPerOp": 10142.27,
+      "userNsPerOp": 9739.59,
+      "systemNsPerOp": 402.68,
+      "wallNsPerOp": 6132.81083,
+      "cpuUs": 2028454,
+      "path": "/Users/mayorovigor/git/bidster/flash-cache/tmp/cpu-memo-wrap/2026-09-30T23-00-50.767Z/swr-cache-manager.cpuprofile",
+      "sampledUs": 1256625,
+      "topSelf": [
+        {
+          "frame": "(garbage collector) :0",
+          "selfPercent": 40.16711429424053
+        },
+        {
+          "frame": "(program) :0",
+          "selfPercent": 11.190689346463742
+        },
+        {
+          "frame": "hasKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:417",
+          "selfPercent": 7.698955535660997
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:705",
+          "selfPercent": 7.172147617626579
+        },
+        {
+          "frame": "get file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/keyv/dist/index.js:498",
+          "selfPercent": 4.608773500447628
+        },
+        {
+          "frame": "runTrace file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:117",
+          "selfPercent": 3.8927285387446533
+        },
+        {
+          "frame": "loader file:///Users/mayorovigor/git/bidster/flash-cache/bench/cpu-memo-wrap.bench.mjs:68",
+          "selfPercent": 3.388759574256441
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:299",
+          "selfPercent": 3.378732716602009
+        },
+        {
+          "frame": "set file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:156",
+          "selfPercent": 2.9178155774395704
+        },
+        {
+          "frame": "getCallbacksByKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:431",
+          "selfPercent": 2.805132796180245
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:158",
+          "selfPercent": 2.463662588282105
+        },
+        {
+          "frame": "post node:inspector:118",
+          "selfPercent": 2.437083457674326
+        },
+        {
+          "frame": "(anonymous) file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/cache-manager/dist/index.mjs:270",
+          "selfPercent": 1.5816970058688948
+        },
+        {
+          "frame": "addKey file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:420",
+          "selfPercent": 1.498856062866806
+        },
+        {
+          "frame": "coalesceAsync file:///Users/mayorovigor/git/bidster/flash-cache/bench/node_modules/@cacheable/utils/dist/index.mjs:468",
+          "selfPercent": 1.4986969063961006
+        }
+      ],
+      "gcPercent": 40.16711429424053
+    }
+  ],
+  "profileInsights": [
+    {
+      "scenario": "l1",
+      "library": "flash-memo",
+      "hashingInclusivePercentExcludingProfilerControl": 0,
+      "profilerControlPercent": 15.001173201605434,
+      "method": "Sum timeDeltas for samples in hashSync and its descendant frames; denominator excludes node:inspector control frames. Refers only to the larger profiled trace."
+    },
+    {
+      "scenario": "l1",
+      "library": "cacheable",
+      "hashingInclusivePercentExcludingProfilerControl": 59.038825528634746,
+      "profilerControlPercent": 2.488421813347386,
+      "method": "Sum timeDeltas for samples in hashSync and its descendant frames; denominator excludes node:inspector control frames. Refers only to the larger profiled trace."
+    },
+    {
+      "scenario": "l1",
+      "library": "cache-manager",
+      "hashingInclusivePercentExcludingProfilerControl": 0,
+      "profilerControlPercent": 5.076563861792051,
+      "method": "Sum timeDeltas for samples in hashSync and its descendant frames; denominator excludes node:inspector control frames. Refers only to the larger profiled trace."
+    }
+  ]
+}

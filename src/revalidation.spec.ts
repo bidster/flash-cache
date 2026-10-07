@@ -148,13 +148,13 @@ describe('L2 revalidation contract', () => {
         });
     });
 
-    it.each([false, true])('del suppresses L2 errors and removes L1 (sync=%s)', async (synchronous) => {
+    it.each([false, true])('del propagates L2 errors after removing L1 (sync=%s)', async (synchronous) => {
         const { cache, l1, l2, read, entry } = await setup();
         const failure = new Error('L2 delete failed');
         if (synchronous) l2.delete.mockImplementation(() => { throw failure; });
         else l2.delete.mockRejectedValue(failure);
 
-        await expect(cache.del('k')).resolves.toBeUndefined();
+        await expect(cache.del('k')).rejects.toBe(failure);
         expect(l1.has('k')).toBe(false);
         expect(l2.delete).toHaveBeenCalledExactlyOnceWith('k');
 

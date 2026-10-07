@@ -284,10 +284,6 @@ export class FlashCache<L1Value = unknown, L2Value = L1Value> {
         const prefixedKey = this.makePrefixedKey(key);
         this.primary.delete(prefixedKey);
 
-        try {
-            await this.secondary.delete(prefixedKey);
-        } catch {
-            // Ошибка L2 не отменяет удаление из L1.
-        }
+        await this.secondary.delete(prefixedKey);
     }
 }

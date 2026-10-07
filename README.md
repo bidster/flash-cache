@@ -292,7 +292,7 @@ All operations on the same key must use consistent value types and transformatio
 ## Writes, deletion, and errors
 
 - `await cache.set(key, value, serialize?)` serializes first, writes L1 synchronously, then waits for the L2 write. An L2 write error is suppressed; the new L1 value remains available.
-- `await cache.del(key)` deletes L1 synchronously, then waits for L2 deletion. An L2 deletion error is suppressed; the remaining L2 entry may populate L1 again on a later read.
+- `await cache.del(key)` deletes L1 synchronously, then waits for L2 deletion. An L2 deletion error rejects the returned promise; L1 remains deleted, but the remaining L2 entry may populate L1 again on a later read.
 - L2 read errors are treated as an absent L2 entry. An unexpired L1 value can still be returned; otherwise the result is `miss` or `expired`.
 - L1 errors, serializer errors, and deserializer errors propagate. A serializer failure occurs before either store is changed; an L1 write or deletion failure prevents the corresponding L2 operation.
 - Loader errors propagate to callers waiting for a value on a miss or expiry. Background refresh errors are suppressed when a usable cached value has already been returned. Failed loads do not write a replacement or extend the previous TTL; later calls can try again.
