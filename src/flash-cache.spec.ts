@@ -340,10 +340,10 @@ describe('FlashCache', () => {
         const shared = setup<typeof original>().cache;
         expect(shared.getOrSet('x', () => original)).toBe(original);
         const cloneValue = vi.fn(structuredClone);
-        const { cache, primary } = setup<typeof original>(undefined, { cloneValue });
+        const { cache, primary } = setup<typeof original>();
         const load = deferred<typeof original>();
-        const first = cache.getOrSet('x', () => load.promise);
-        const second = cache.getOrSet('x', () => load.promise);
+        const first = cache.getOrSet('x', () => load.promise, { cloneValue });
+        const second = cache.getOrSet('x', () => load.promise, { cloneValue });
         load.resolve(original);
         const [a, b] = await Promise.all([first, second]);
         expect(a).not.toBe(b);
@@ -353,7 +353,7 @@ describe('FlashCache', () => {
         expect(cloneValue).toHaveBeenCalledTimes(2);
         cache.set('y', original);
         expect(cloneValue).toHaveBeenCalledTimes(2);
-        expect(cache.get('y')).not.toBe(original);
+        expect(cache.get('y', { cloneValue })).not.toBe(original);
     });
 
     it('keeps clone errors local to readers sharing a load', async () => {
@@ -362,10 +362,10 @@ describe('FlashCache', () => {
             .mockImplementationOnce(() => {
                 throw new Error('clone');
             });
-        const { cache } = setup<number>(undefined, { cloneValue });
+        const { cache } = setup<number>();
         const load = deferred<number>();
-        const first = cache.getOrSet('x', () => load.promise);
-        const second = cache.getOrSet('x', () => load.promise);
+        const first = cache.getOrSet('x', () => load.promise, { cloneValue });
+        const second = cache.getOrSet('x', () => load.promise, { cloneValue });
         load.resolve(1);
         const results = await Promise.allSettled([first, second]);
         expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
@@ -385,11 +385,12 @@ describe('FlashCache', () => {
             serialize: (user: User) => user.name,
             deserialize: (name) => new User(name),
         });
-        const { cache, primary } = setup(secondary, { cloneValue: (user: User) => new User(user.name) });
+        const { cache, primary } = setup(secondary);
+        const cloneValue = (user: User) => new User(user.name);
         const original = new User('Igor');
-        expect((cache.getOrSet('x', () => original) as User).greeting()).toBe('Hello Igor');
+        expect((cache.getOrSet('x', () => original, { cloneValue }) as User).greeting()).toBe('Hello Igor');
         primary.clear();
-        const read = cache.get('x') as User;
+        const read = cache.get('x', { cloneValue }) as User;
         expect(read.greeting()).toBe('Hello Igor');
         expect(read).not.toBe(original);
         expect(raw.get('x')?.value).toBe('Igor');

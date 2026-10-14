@@ -27,7 +27,7 @@ await cache.delete('users');
 
 - Operations return `MayBePromise<T>` (`T | Promise<T>`). Fresh L1 hits do not create a Promise or access L2. A miss can also complete synchronously when both stores and the factory are synchronous.
 - `ttl` is a positive integer in milliseconds. `staleRatio` is between 0 and 1: at `0.8`, entries become eligible for background refresh after 80% of their lifetime. Expired entries are never served. L2 promotion preserves timestamps. After an L2 response, an active operation rechecks L1: a fresh entry takes precedence without another publication or factory call. Stale and expired L1 entries do not take precedence.
-- One singleflight per key and cache instance covers L2 lookup, factory execution and writes. The first caller supplies the factory and refresh options. Callers sharing a key must agree on the data contract.
+- One singleflight per key and cache instance covers L2 lookup, factory execution and writes. The first caller supplies the factory and TTL; each reader chooses its own cloning policy. Callers sharing a key must agree on the data contract.
 - `set/delete` detach existing loads. Existing readers still receive their results, but detached work cannot start publishing into either cache level. Already dispatched L2 writes cannot be cancelled. Coordination is local to the instance.
 - `get` returns fresh or usable stale data from L1 synchronously, otherwise reads L2. It never starts background refresh. A miss, expired entry or L2 read failure returns `undefined`.
 - `null` is a valid cached value; `undefined` is reserved for misses.
@@ -46,13 +46,16 @@ const secondary = new SerializedStore(new MapStore<string>(), {
 const dates = new FlashCache(new MapStore<Date>(), secondary, {
   ttl: 60_000,
   staleRatio: 0.8,
-  cloneValue: (date) => new Date(date.getTime()),
 });
+const date = await dates.getOrSet('today', () => new Date(), {
+  cloneValue: (value) => new Date(value.getTime()),
+});
+const copy = await dates.get('today', { cloneValue: (value) => new Date(value.getTime()) });
 ```
 
 Serialization belongs to the store, not individual calls. A store only implements `get/set/delete`; no special error types are required. `SerializedStore` is an optional adapter and passes original conversion errors through without wrapping them. FlashCache applies the L2 operation error policy regardless of whether the error came from serialization or storage access.
 
-Values are shared by reference by default. An optional instance-level `cloneValue` creates a separate value for each reader, including readers sharing a load. It must preserve the value's type and behavior. Input values are not cloned. Use `structuredClone` explicitly only for compatible data.
+Values are shared by reference by default. An optional `cloneValue` in the options of `getOrSet` or `get` creates a separate value for that call, including readers sharing a load. Omitting it returns the shared reference, regardless of other readers’ options. Instance-level `cloneValue` is no longer supported. It must synchronously preserve the value's type and behavior. A cloning error affects only that reader. Input values are not cloned. Use `structuredClone` explicitly only for compatible data.
 
 ## Errors
 

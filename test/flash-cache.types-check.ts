@@ -3,10 +3,10 @@ import { FlashCache, MapStore, SerializedStore, type MayBePromise } from '../dis
 const cache = new FlashCache<string | null | undefined>(
     new MapStore<string | null | undefined>(),
     new MapStore<string | null | undefined>(),
-    { ttl: 1000, staleRatio: 0.5, cloneValue: (value) => value },
+    { ttl: 1000, staleRatio: 0.5 },
 );
-const result: MayBePromise<string | null> = cache.getOrSet('x', () => 'value');
-const read: MayBePromise<string | null | undefined> = cache.get('x');
+const result: MayBePromise<string | null> = cache.getOrSet('x', () => 'value', { cloneValue: (value) => value });
+const read: MayBePromise<string | null | undefined> = cache.get('x', { cloneValue: (value) => value });
 void result;
 void read;
 cache.set('x', null);
@@ -20,15 +20,25 @@ cache.getOrSet('x', () => 1);
 cache.getOrSet('x', () => 'value', { materialize: String });
 // @ts-expect-error serialize belongs to the store
 cache.getOrSet('x', () => 'value', { serialize: String });
-// @ts-expect-error cloning is configured on the instance
-cache.getOrSet('x', () => 'value', { cloneValue: String });
+// @ts-expect-error cloneValue cannot return a different value type
+cache.getOrSet('x', () => 'value', { cloneValue: () => 1 });
+// @ts-expect-error get also requires the original value type
+cache.get('x', { cloneValue: () => 1 });
+// @ts-expect-error cloneValue must be synchronous
+cache.getOrSet('x', () => 'value', { cloneValue: async (value) => value });
+// @ts-expect-error get cloneValue must be synchronous
+cache.get('x', { cloneValue: async (value) => value });
+// @ts-expect-error cloneValue cannot return undefined
+cache.get('x', { cloneValue: () => undefined });
+// @ts-expect-error set does not clone input values
+cache.set('x', 'value', { cloneValue: String });
 // @ts-expect-error useClones is removed
 new FlashCache(new MapStore<string>(), new MapStore<string>(), { ttl: 1000, staleRatio: 0.5, useClones: true });
 new FlashCache<string>(new MapStore<string>(), new MapStore<string>(), {
     ttl: 1000,
     staleRatio: 0.5,
-    // @ts-expect-error cloneValue must preserve the cached type synchronously
-    cloneValue: async (value) => value,
+    // @ts-expect-error instance-level cloneValue is removed
+    cloneValue: String,
 });
 const dates = new FlashCache<Date>(
     new MapStore<Date>(),
@@ -36,9 +46,9 @@ const dates = new FlashCache<Date>(
         serialize: (date: Date) => date.toISOString(),
         deserialize: (value) => new Date(value),
     }),
-    { ttl: 1000, staleRatio: 0.5, cloneValue: (value) => new Date(value) },
+    { ttl: 1000, staleRatio: 0.5 },
 );
-const date: MayBePromise<Date> = dates.getOrSet('x', () => new Date());
+const date: MayBePromise<Date> = dates.getOrSet('x', () => new Date(), { cloneValue: (value) => new Date(value) });
 void date;
 // @ts-expect-error raw strings do not implement a Date store
 new FlashCache<Date>(new MapStore<Date>(), new MapStore<string>(), { ttl: 1000, staleRatio: 0.5 });

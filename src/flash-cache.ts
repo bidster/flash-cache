@@ -1,16 +1,21 @@
 import type { CacheableValue, MayBeAsyncStore, MayBePromise, Store, StoreValue } from './types.js';
 
-export interface FlashCacheOptions<T> {
+export interface FlashCacheOptions {
     ttl: number;
     staleRatio: number;
     namespace?: string | false;
-    cloneValue?: (value: CacheableValue<T>) => CacheableValue<T>;
     onError?: (error: unknown, context: { key: string; operation: 'l2.get' | 'l2.set' | 'refresh' }) => void;
 }
 
-export interface GetOrSetOptions {
+export interface SetOptions {
     customTtl?: number;
 }
+
+export interface GetOptions<T> {
+    cloneValue?: (value: CacheableValue<T>) => CacheableValue<T>;
+}
+
+export interface GetOrSetOptions<T> extends GetOptions<T>, SetOptions {}
 
 type Publication = { active: boolean };
 type Flight<T> = Publication & {
@@ -24,13 +29,12 @@ export class FlashCache<T = unknown> {
     private readonly prefix: string;
     private readonly ttl: number;
     private readonly staleRatio: number;
-    private readonly cloneValue?: FlashCacheOptions<T>['cloneValue'];
-    private readonly onError?: FlashCacheOptions<T>['onError'];
+    private readonly onError?: FlashCacheOptions['onError'];
 
     constructor(
         private readonly primary: Store<T>,
         private readonly secondary: MayBeAsyncStore<T>,
-        options: FlashCacheOptions<T>,
+        options: FlashCacheOptions,
     ) {
         if (!Number.isInteger(options.ttl) || options.ttl <= 0) {
             throw new Error('ttl must be a positive integer in milliseconds');
@@ -40,7 +44,6 @@ export class FlashCache<T = unknown> {
         }
         this.ttl = options.ttl;
         this.staleRatio = options.staleRatio;
-        this.cloneValue = options.cloneValue;
         this.onError = options.onError;
         const namespace = options.namespace ? `${options.namespace}:` : '';
         this.prefix = options.namespace === false ? '' : `flashCache:v2:${namespace}`;
@@ -49,24 +52,25 @@ export class FlashCache<T = unknown> {
     getOrSet(
         key: string,
         factory: () => MayBePromise<CacheableValue<T>>,
-        options: GetOrSetOptions = {},
+        options: GetOrSetOptions<T> = {},
     ): MayBePromise<CacheableValue<T>> {
+        const { cloneValue } = options;
         const storedKey = this.prefix + key;
         const local = this.primary.get(storedKey);
         const time = Date.now();
         const hasUsableLocal = local !== undefined && local.value !== undefined && local.expAt > time;
 
-        if (hasUsableLocal && local.staleAt > time) return this.toReader(local.value as CacheableValue<T>);
+        if (hasUsableLocal && local.staleAt > time) return this.toReader(local.value as CacheableValue<T>, cloneValue);
 
         const existing = this.flights.get(storedKey);
         if (existing) {
-            if (hasUsableLocal) return this.toReader(local.value as CacheableValue<T>);
+            if (hasUsableLocal) return this.toReader(local.value as CacheableValue<T>, cloneValue);
             return existing.cached
                 .then((entry) => {
                     if (entry && entry.expAt > Date.now()) return entry.value as CacheableValue<T>;
                     return existing.completed;
                 })
-                .then((value) => this.toReader(value));
+                .then((value) => this.toReader(value, cloneValue));
         }
 
         let result: MayBePromise<CacheableValue<T>>;
@@ -74,20 +78,23 @@ export class FlashCache<T = unknown> {
             result = this.load(key, storedKey, factory, options, hasUsableLocal);
         } catch (error) {
             if (!hasUsableLocal) throw error;
-            return this.toReader(local.value as CacheableValue<T>);
+            return this.toReader(local.value as CacheableValue<T>, cloneValue);
         }
         if (hasUsableLocal) {
             if (result instanceof Promise) void result.catch(() => undefined);
-            return this.toReader(local.value as CacheableValue<T>);
+            return this.toReader(local.value as CacheableValue<T>, cloneValue);
         }
-        return result instanceof Promise ? result.then((value) => this.toReader(value)) : this.toReader(result);
+        return result instanceof Promise
+            ? result.then((value) => this.toReader(value, cloneValue))
+            : this.toReader(result, cloneValue);
     }
 
-    get(key: string): MayBePromise<CacheableValue<T> | undefined> {
+    get(key: string, options: GetOptions<T> = {}): MayBePromise<CacheableValue<T> | undefined> {
+        const { cloneValue } = options;
         const storedKey = this.prefix + key;
         const local = this.primary.get(storedKey);
         if (local && local.value !== undefined && local.expAt > Date.now()) {
-            return this.toReader(local.value as CacheableValue<T>);
+            return this.toReader(local.value as CacheableValue<T>, cloneValue);
         }
 
         const publication = { active: true };
@@ -96,11 +103,11 @@ export class FlashCache<T = unknown> {
             const time = Date.now();
             const current = publication.active ? this.primary.get(storedKey) : undefined;
             if (current && current.value !== undefined && current.expAt > time && current.staleAt > time) {
-                return this.toReader(current.value as CacheableValue<T>);
+                return this.toReader(current.value as CacheableValue<T>, cloneValue);
             }
             if (!entry || entry.value === undefined || entry.expAt <= time) return undefined;
             if (publication.active) this.primary.set(storedKey, entry);
-            return this.toReader(entry.value as CacheableValue<T>);
+            return this.toReader(entry.value as CacheableValue<T>, cloneValue);
         };
         let pending = false;
         try {
@@ -115,7 +122,7 @@ export class FlashCache<T = unknown> {
         }
     }
 
-    set(key: string, value: CacheableValue<T>, options: GetOrSetOptions = {}): MayBePromise<void> {
+    set(key: string, value: CacheableValue<T>, options: SetOptions = {}): MayBePromise<void> {
         const storedKey = this.prefix + key;
         this.detach(storedKey);
         const ttl = options.customTtl ?? this.ttl;
@@ -137,7 +144,7 @@ export class FlashCache<T = unknown> {
         key: string,
         storedKey: string,
         factory: () => MayBePromise<CacheableValue<T>>,
-        options: GetOrSetOptions,
+        options: SetOptions,
         background: boolean,
     ): MayBePromise<CacheableValue<T>> {
         // Регистрируем работу до обращения к пользовательскому коду, включая синхронный store.
@@ -218,7 +225,7 @@ export class FlashCache<T = unknown> {
         key: string,
         storedKey: string,
         factory: () => MayBePromise<CacheableValue<T>>,
-        options: GetOrSetOptions,
+        options: SetOptions,
         publication: Publication,
     ): MayBePromise<CacheableValue<T>> {
         const ttl = options.customTtl ?? this.ttl;
@@ -274,8 +281,8 @@ export class FlashCache<T = unknown> {
         }
     }
 
-    private toReader(value: CacheableValue<T>): CacheableValue<T> {
-        return this.cloneValue ? this.cloneValue(value) : value;
+    private toReader(value: CacheableValue<T>, cloneValue: GetOptions<T>['cloneValue']): CacheableValue<T> {
+        return cloneValue ? cloneValue(value) : value;
     }
 
     private report(error: unknown, key: string, operation: 'l2.get' | 'l2.set' | 'refresh'): void {
