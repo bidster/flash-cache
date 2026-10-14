@@ -7,9 +7,5 @@
     "skipLibCheck": true,
     "noEmit": false
   },
-  "exclude": [
-    "src/**/*.spec.ts",
-    "src/**/*.test.ts",
-    "**/__tests__/**"
-  ]
+  "exclude": ["src/**/*.spec.ts", "src/**/*.test.ts", "**/__tests__/**"]
 }

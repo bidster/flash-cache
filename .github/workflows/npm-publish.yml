@@ -25,6 +25,9 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Check lint and formatting
+        run: yarn lint && yarn format:check
+
       - name: Build package
         run: yarn build
 
@@ -33,7 +36,7 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "Detected version: $VERSION"
-          
+
           if [[ "$VERSION" == *"-beta"* ]]; then
             TAG="beta"
           elif [[ "$VERSION" == *"-rc"* ]]; then
@@ -45,7 +48,7 @@ jobs:
           else
             TAG="latest"
           fi
-          
+
           echo "Publishing with tag: $TAG"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
 

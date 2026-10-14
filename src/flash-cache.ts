@@ -1,21 +1,20 @@
-import type {CacheableValue, MayBeAsyncStore, MayBePromise, Store, StoreValue} from './types.js';
-import {StoreTransformError} from './stores/serialized-store.js';
+import type { CacheableValue, MayBeAsyncStore, MayBePromise, Store, StoreValue } from './types.js';
 
 export interface FlashCacheOptions<T> {
     ttl: number;
     staleRatio: number;
     namespace?: string | false;
     cloneValue?: (value: CacheableValue<T>) => CacheableValue<T>;
-    onError?: (error: unknown, context: {key: string; operation: 'l2.get' | 'l2.set' | 'refresh'}) => void;
+    onError?: (error: unknown, context: { key: string; operation: 'l2.get' | 'l2.set' | 'refresh' }) => void;
 }
 
 export interface GetOrSetOptions {
     customTtl?: number;
 }
 
-type Publication = {active: boolean};
+type Publication = { active: boolean };
 type Flight<T> = Publication & {
-    promise: Promise<CacheableValue<T>>;
+    completed: Promise<CacheableValue<T>>;
     cached: Promise<StoreValue<T> | undefined>;
 };
 
@@ -43,7 +42,8 @@ export class FlashCache<T = unknown> {
         this.staleRatio = options.staleRatio;
         this.cloneValue = options.cloneValue;
         this.onError = options.onError;
-        this.prefix = options.namespace === false ? '' : `flashCache:v2:${options.namespace ? `${options.namespace}:` : ''}`;
+        const namespace = options.namespace ? `${options.namespace}:` : '';
+        this.prefix = options.namespace === false ? '' : `flashCache:v2:${namespace}`;
     }
 
     getOrSet(
@@ -54,40 +54,51 @@ export class FlashCache<T = unknown> {
         const storedKey = this.prefix + key;
         const local = this.primary.get(storedKey);
         const time = Date.now();
-        const usable = local !== undefined && local.value !== undefined && local.expAt > time;
+        const hasUsableLocal = local !== undefined && local.value !== undefined && local.expAt > time;
 
-        if (usable && local.staleAt > time) return this.toReader(local.value as CacheableValue<T>);
+        if (hasUsableLocal && local.staleAt > time) return this.toReader(local.value as CacheableValue<T>);
 
         const existing = this.flights.get(storedKey);
         if (existing) {
-            if (usable) return this.toReader(local.value as CacheableValue<T>);
-            return existing.cached.then(entry => entry && entry.expAt > Date.now()
-                ? entry.value as CacheableValue<T> : existing.promise).then(value => this.toReader(value));
+            if (hasUsableLocal) return this.toReader(local.value as CacheableValue<T>);
+            return existing.cached
+                .then((entry) => {
+                    if (entry && entry.expAt > Date.now()) return entry.value as CacheableValue<T>;
+                    return existing.completed;
+                })
+                .then((value) => this.toReader(value));
         }
 
         let result: MayBePromise<CacheableValue<T>>;
         try {
-            result = this.load(key, storedKey, factory, options, usable);
+            result = this.load(key, storedKey, factory, options, hasUsableLocal);
         } catch (error) {
-            if (!usable) throw error;
+            if (!hasUsableLocal) throw error;
             return this.toReader(local.value as CacheableValue<T>);
         }
-        if (usable) {
+        if (hasUsableLocal) {
             if (result instanceof Promise) void result.catch(() => undefined);
             return this.toReader(local.value as CacheableValue<T>);
         }
-        return result instanceof Promise ? result.then(value => this.toReader(value)) : this.toReader(result);
+        return result instanceof Promise ? result.then((value) => this.toReader(value)) : this.toReader(result);
     }
 
     get(key: string): MayBePromise<CacheableValue<T> | undefined> {
         const storedKey = this.prefix + key;
         const local = this.primary.get(storedKey);
-        if (local && local.value !== undefined && local.expAt > Date.now()) return this.toReader(local.value as CacheableValue<T>);
+        if (local && local.value !== undefined && local.expAt > Date.now()) {
+            return this.toReader(local.value as CacheableValue<T>);
+        }
 
-        const publication = {active: true};
+        const publication = { active: true };
         this.track(storedKey, publication);
         const accept = (entry: StoreValue<T> | undefined) => {
-            if (!entry || entry.value === undefined || entry.expAt <= Date.now()) return undefined;
+            const time = Date.now();
+            const current = publication.active ? this.primary.get(storedKey) : undefined;
+            if (current && current.value !== undefined && current.expAt > time && current.staleAt > time) {
+                return this.toReader(current.value as CacheableValue<T>);
+            }
+            if (!entry || entry.value === undefined || entry.expAt <= time) return undefined;
             if (publication.active) this.primary.set(storedKey, entry);
             return this.toReader(entry.value as CacheableValue<T>);
         };
@@ -121,7 +132,7 @@ export class FlashCache<T = unknown> {
         if (removed instanceof Promise) return removed.then(() => undefined);
     }
 
-    /** Один цикл получения данных; ответ stale и завершение обновления могут различаться. */
+    /** Ответ из кеша доступен до завершения обновления; singleflight живёт до завершения всего цикла. */
     private load(
         key: string,
         storedKey: string,
@@ -130,94 +141,119 @@ export class FlashCache<T = unknown> {
         background: boolean,
     ): MayBePromise<CacheableValue<T>> {
         // Регистрируем работу до обращения к пользовательскому коду, включая синхронный store.
-        let resolve!: (value: CacheableValue<T>) => void;
-        let reject!: (error: unknown) => void;
-        const promise = new Promise<CacheableValue<T>>((done, fail) => { resolve = done; reject = fail; });
+        let resolveCompleted!: (value: CacheableValue<T>) => void;
+        let rejectCompleted!: (error: unknown) => void;
+        const completed = new Promise<CacheableValue<T>>((resolve, reject) => {
+            resolveCompleted = resolve;
+            rejectCompleted = reject;
+        });
         let resolveCached!: (entry: StoreValue<T> | undefined) => void;
         let rejectCached!: (error: unknown) => void;
-        const cached = new Promise<StoreValue<T> | undefined>((done, fail) => { resolveCached = done; rejectCached = fail; });
-        const flight: Flight<T> = {active: true, promise, cached};
+        const cached = new Promise<StoreValue<T> | undefined>((resolve, reject) => {
+            resolveCached = resolve;
+            rejectCached = reject;
+        });
+        const flight: Flight<T> = { active: true, completed, cached };
         this.flights.set(storedKey, flight);
         this.track(storedKey, flight);
-        void promise.catch(() => undefined);
+        void completed.catch(() => undefined);
         void cached.catch(() => undefined);
-        let refreshOwnsCompletion = false;
 
-        const finish = (result: {value: CacheableValue<T>} | {error: unknown}) => {
+        // Только завершение цикла очищает регистрацию и уведомляет о фоновой ошибке.
+        const finish = (result: { value: CacheableValue<T> } | { error: unknown }) => {
             this.release(storedKey, flight);
             if (this.flights.get(storedKey) === flight) this.flights.delete(storedKey);
             if ('error' in result) {
-                reject(result.error);
+                rejectCompleted(result.error);
                 rejectCached(result.error);
                 if (background) this.report(result.error, key, 'refresh');
-            } else resolve(result.value);
-        };
-        const refresh = (): MayBePromise<CacheableValue<T>> => {
-            const ttl = options.customTtl ?? this.ttl;
-            if (!Number.isInteger(ttl) || ttl <= 0) throw new Error('customTtl must be a positive integer in milliseconds');
-            const loaded = factory();
-            const publish = (value: CacheableValue<T>): MayBePromise<CacheableValue<T>> => {
-                if (value === undefined) throw new Error('undefined values cannot be cached');
-                if (!flight.active) return value;
-                const written = this.publish(key, storedKey, value, ttl, flight);
-                return written instanceof Promise ? written.then(() => value) : value;
-            };
-            return loaded instanceof Promise ? loaded.then(publish) : publish(loaded);
-        };
-        const checked = (entry: StoreValue<T> | undefined): MayBePromise<CacheableValue<T>> => {
-            if (entry && entry.value !== undefined && entry.expAt > Date.now()) {
-                if (flight.active) this.primary.set(storedKey, entry);
-                resolveCached(entry);
-                if (entry.staleAt > Date.now()) return entry.value as CacheableValue<T>;
-                // Stale из L2 доступен первому читателю до завершения factory.
-                background = true;
-                refreshOwnsCompletion = true;
-                let updated: MayBePromise<CacheableValue<T>>;
-                try { updated = refresh(); } catch (error) {
-                    finish({error});
-                    return entry.value as CacheableValue<T>;
-                }
-                if (updated instanceof Promise) updated.then(value => finish({value}), error => finish({error}));
-                else finish({value: updated});
-                return entry.value as CacheableValue<T>;
+            } else {
+                resolveCompleted(result.value);
             }
-            resolveCached(undefined);
-            return refresh();
         };
 
-        let result: MayBePromise<CacheableValue<T>>;
-        try {
-            const read = this.readSecondary(key, storedKey);
-            result = read instanceof Promise ? read.then(checked) : checked(read);
-        } catch (error) {
-            finish({error});
-            throw error;
-        }
-
-        // Ветка stale L2 завершает flight сама: её ответ и итог обновления различаются.
-        const complete = (value: CacheableValue<T>) => {
-            if (!refreshOwnsCompletion) finish({value});
-            return value;
+        const acceptSecondary = (entry: StoreValue<T> | undefined): MayBePromise<CacheableValue<T>> => {
+            // Ответ из кеша не ждёт обновления; промах ждёт completed напрямую.
+            let response: StoreValue<T> | undefined;
+            let completion: MayBePromise<CacheableValue<T>>;
+            try {
+                const time = Date.now();
+                const current = flight.active ? this.primary.get(storedKey) : undefined;
+                if (current && current.value !== undefined && current.expAt > time && current.staleAt > time) {
+                    response = current;
+                } else if (entry && entry.value !== undefined && entry.expAt > time) {
+                    if (flight.active) this.primary.set(storedKey, entry);
+                    response = entry;
+                }
+                resolveCached(response);
+                if (response && response.staleAt > time) {
+                    completion = response.value as CacheableValue<T>;
+                } else {
+                    if (response) background = true;
+                    completion = this.refresh(key, storedKey, factory, options, flight);
+                }
+            } catch (error) {
+                finish({ error });
+                if (response) return response.value as CacheableValue<T>;
+                throw error;
+            }
+            if (completion instanceof Promise) {
+                void completion.then(
+                    (value) => finish({ value }),
+                    (error) => finish({ error }),
+                );
+                return response ? (response.value as CacheableValue<T>) : completed;
+            }
+            finish({ value: completion });
+            return response ? (response.value as CacheableValue<T>) : completion;
         };
-        if (result instanceof Promise) result = result.then(complete, error => { finish({error}); throw error; });
-        else complete(result);
 
-        return result;
+        // Ошибки L2 уже превращены в промах внутри readSecondary.
+        const read = this.readSecondary(key, storedKey);
+        return read instanceof Promise ? read.then(acceptSecondary) : acceptSecondary(read);
     }
 
-    private publish(key: string, storedKey: string, value: CacheableValue<T>, ttl: number, publication?: Publication): MayBePromise<void> {
+    /** Factory и публикация результата; отсоединённая загрузка остаётся доступна своим читателям. */
+    private refresh(
+        key: string,
+        storedKey: string,
+        factory: () => MayBePromise<CacheableValue<T>>,
+        options: GetOrSetOptions,
+        publication: Publication,
+    ): MayBePromise<CacheableValue<T>> {
+        const ttl = options.customTtl ?? this.ttl;
+        if (!Number.isInteger(ttl) || ttl <= 0) throw new Error('customTtl must be a positive integer in milliseconds');
+        const loaded = factory();
+        const persist = (value: CacheableValue<T>): MayBePromise<CacheableValue<T>> => {
+            if (value === undefined) throw new Error('undefined values cannot be cached');
+            if (!publication.active) return value;
+            const written = this.publish(key, storedKey, value, ttl, publication);
+            return written instanceof Promise ? written.then(() => value) : value;
+        };
+        return loaded instanceof Promise ? loaded.then(persist) : persist(loaded);
+    }
+
+    private publish(
+        key: string,
+        storedKey: string,
+        value: CacheableValue<T>,
+        ttl: number,
+        publication?: Publication,
+    ): MayBePromise<void> {
         const time = Date.now();
-        const entry = {value, time, staleAt: time + ttl * this.staleRatio, expAt: time + ttl};
+        const entry = { value, time, staleAt: time + ttl * this.staleRatio, expAt: time + ttl };
         this.primary.set(storedKey, entry);
         if (publication && !publication.active) return;
         try {
             const written = this.secondary.set(storedKey, entry);
-            if (written instanceof Promise) return written.catch(error => {
-                if (error instanceof StoreTransformError) throw error;
-                this.report(error, key, 'l2.set');
-            }).then(() => undefined);
+            if (written instanceof Promise) {
+                return written
+                    .catch((error) => {
+                        this.report(error, key, 'l2.set');
+                    })
+                    .then(() => undefined);
+            }
         } catch (error) {
-            if (error instanceof StoreTransformError) throw error;
             this.report(error, key, 'l2.set');
         }
     }
@@ -225,14 +261,14 @@ export class FlashCache<T = unknown> {
     private readSecondary(key: string, storedKey: string): MayBePromise<StoreValue<T> | undefined> {
         try {
             const read = this.secondary.get(storedKey);
-            if (read instanceof Promise) return read.catch(error => {
-                if (error instanceof StoreTransformError) throw error;
-                this.report(error, key, 'l2.get');
-                return undefined;
-            });
+            if (read instanceof Promise) {
+                return read.catch((error) => {
+                    this.report(error, key, 'l2.get');
+                    return undefined;
+                });
+            }
             return read;
         } catch (error) {
-            if (error instanceof StoreTransformError) throw error;
             this.report(error, key, 'l2.get');
             return undefined;
         }
@@ -243,12 +279,19 @@ export class FlashCache<T = unknown> {
     }
 
     private report(error: unknown, key: string, operation: 'l2.get' | 'l2.set' | 'refresh'): void {
-        try { this.onError?.(error, {key, operation}); } catch { /* Диагностика не меняет результат операции. */ }
+        try {
+            this.onError?.(error, { key, operation });
+        } catch {
+            /* Диагностика не меняет результат операции. */
+        }
     }
 
     private track(key: string, publication: Publication): void {
         let pending = this.publications.get(key);
-        if (!pending) this.publications.set(key, pending = new Set());
+        if (!pending) {
+            pending = new Set();
+            this.publications.set(key, pending);
+        }
         pending.add(publication);
     }
 
@@ -259,7 +302,9 @@ export class FlashCache<T = unknown> {
     }
 
     private detach(key: string): void {
-        this.publications.get(key)?.forEach(publication => { publication.active = false; });
+        this.publications.get(key)?.forEach((publication) => {
+            publication.active = false;
+        });
         this.publications.delete(key);
         this.flights.delete(key);
     }

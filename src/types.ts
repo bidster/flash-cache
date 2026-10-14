@@ -27,4 +27,3 @@ export type MayBeAsyncStore<T = unknown> = {
     set(key: string, value: StoreValue<T>): MayBePromise<any>;
     delete(key: string): MayBePromise<any>;
 };
-

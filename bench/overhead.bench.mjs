@@ -18,35 +18,41 @@ const bench = new Bench({ time: 1000, iterations: 16, warmupTime: 250, warmupIte
 const order = ['LRU direct', 'FlashCache + LRU', 'FlashCache + LRU + await'];
 if (process.env.BENCH_REVERSE === '1') order.reverse();
 for (const name of order) {
-  let read, primary, secondary, started;
-  bench.add(name, async () => {
-    for (const key of requests) {
-      const result = read(key);
-      const actual = name === 'FlashCache + LRU + await' ? await result : result;
-      if (actual !== value) throw new Error(`${name}: incorrect or asynchronous result`);
-    }
-  }, {
-    beforeEach: async () => {
-      started = Date.now();
-      primary = new LRUCache({ max: KEYS, ttl: 0 });
-      secondary = new MapStore();
-      secondary.get = () => { throw new Error('Fresh L1-hit must not access L2'); };
-      if (name === 'LRU direct') {
-        for (let i = 0; i < KEYS; i++) primary.set(`key:${i}`, value);
-        read = (key) => primary.get(key);
-      } else {
-        const cache = new FlashCache(primary, secondary, { ttl: TTL, staleRatio: 1, namespace: false });
-        for (let i = 0; i < KEYS; i++) await cache.set(`key:${i}`, value);
-        assert.ok(!(cache.get('key:0') instanceof Promise));
-        read = (key) => cache.get(key);
-      }
-    },
-    afterEach: () => {
-      assert.ok(Date.now() - started < TTL / 2, 'TTL could affect the result');
-      primary.clear();
-      secondary.clear();
-    },
-  });
+    let read, primary, secondary, started;
+    bench.add(
+        name,
+        async () => {
+            for (const key of requests) {
+                const result = read(key);
+                const actual = name === 'FlashCache + LRU + await' ? await result : result;
+                if (actual !== value) throw new Error(`${name}: incorrect or asynchronous result`);
+            }
+        },
+        {
+            beforeEach: async () => {
+                started = Date.now();
+                primary = new LRUCache({ max: KEYS, ttl: 0 });
+                secondary = new MapStore();
+                secondary.get = () => {
+                    throw new Error('Fresh L1-hit must not access L2');
+                };
+                if (name === 'LRU direct') {
+                    for (let i = 0; i < KEYS; i++) primary.set(`key:${i}`, value);
+                    read = (key) => primary.get(key);
+                } else {
+                    const cache = new FlashCache(primary, secondary, { ttl: TTL, staleRatio: 1, namespace: false });
+                    for (let i = 0; i < KEYS; i++) await cache.set(`key:${i}`, value);
+                    assert.ok(!(cache.get('key:0') instanceof Promise));
+                    read = (key) => cache.get(key);
+                }
+            },
+            afterEach: () => {
+                assert.ok(Date.now() - started < TTL / 2, 'TTL could affect the result');
+                primary.clear();
+                secondary.clear();
+            },
+        },
+    );
 }
 await bench.run();
 console.log(`\nLRU overhead, ${OPERATIONS} operations/sample`);

@@ -2,7 +2,7 @@ import Redis from 'ioredis';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { IORedisStore, type JsonValue } from './ioredis-store';
-import {FlashCache, MapStore, SerializedStore} from '../index';
+import { FlashCache, MapStore, SerializedStore } from '../index';
 
 describe('IORedisStore integration', () => {
     let container: StartedTestContainer;
@@ -11,9 +11,9 @@ describe('IORedisStore integration', () => {
 
     beforeAll(async () => {
         container = await new GenericContainer('redis:7-alpine')
-          .withExposedPorts(6379)
-          .withWaitStrategy(Wait.forLogMessage('Ready to accept connections'))
-          .start();
+            .withExposedPorts(6379)
+            .withWaitStrategy(Wait.forLogMessage('Ready to accept connections'))
+            .start();
 
         client = new Redis({
             host: container.getHost(),
@@ -67,15 +67,17 @@ describe('IORedisStore integration', () => {
     it('runs the cache through Redis with store codecs and synchronous L1 hits', async () => {
         const l1 = new MapStore<Date>();
         const secondary = new SerializedStore<Date, JsonValue>(store, {
-            serialize: date => date.toISOString(),
-            deserialize: value => {
+            serialize: (date) => date.toISOString(),
+            deserialize: (value) => {
                 if (typeof value !== 'string') throw new Error('Expected a date string');
                 return new Date(value);
             },
         });
         const cache = new FlashCache(l1, secondary, {
-            ttl: 10_000, staleRatio: 0.8, namespace: 'integration',
-            cloneValue: date => new Date(date.getTime()),
+            ttl: 10_000,
+            staleRatio: 0.8,
+            namespace: 'integration',
+            cloneValue: (date) => new Date(date.getTime()),
         });
         const date = new Date('2026-01-01T00:00:00Z');
         expect(await cache.getOrSet('date', () => date)).toEqual(date);
@@ -90,21 +92,26 @@ describe('IORedisStore integration', () => {
 
     it('does not write a detached factory result into Redis', async () => {
         const cache = new FlashCache<JsonValue>(new MapStore<JsonValue>(), store, {
-            ttl: 10_000, staleRatio: 0.8, namespace: 'integration',
+            ttl: 10_000,
+            staleRatio: 0.8,
+            namespace: 'integration',
         });
         let finish!: (value: JsonValue) => void;
         let started!: () => void;
-        const loading = new Promise<void>(resolve => { started = resolve; });
+        const loading = new Promise<void>((resolve) => {
+            started = resolve;
+        });
         const pending = cache.getOrSet('detached', () => {
             started();
-            return new Promise<JsonValue>(resolve => { finish = resolve; });
+            return new Promise<JsonValue>((resolve) => {
+                finish = resolve;
+            });
         });
         await loading;
         await cache.set('detached', 'new');
         finish('old');
         expect(await pending).toBe('old');
-        expect(await store.get('flashCache:v2:integration:detached')).toMatchObject({value: 'new'});
+        expect(await store.get('flashCache:v2:integration:detached')).toMatchObject({ value: 'new' });
         await cache.delete('detached');
     });
-
 });

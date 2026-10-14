@@ -30,115 +30,151 @@ assert.equal(OPERATIONS % 10, 0, 'OPERATIONS must be divisible by 10');
 
 let seed = SEED;
 function random() {
-  seed ^= seed << 13;
-  seed ^= seed >>> 17;
-  seed ^= seed << 5;
-  return (seed >>> 0) / 0x100000000;
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 0x100000000;
 }
 
 function makeCache(name, capacity) {
-  if (name === 'flash-cache') {
-    const primary = new MapStore();
-    const secondary = new MapStore();
-    const cache = new FlashCache(primary, secondary, { ttl: TTL, staleRatio: 1, namespace: false });
+    if (name === 'flash-cache') {
+        const primary = new MapStore();
+        const secondary = new MapStore();
+        const cache = new FlashCache(primary, secondary, { ttl: TTL, staleRatio: 1, namespace: false });
+        return {
+            get: (key) => cache.get(key),
+            set: (key, value) => cache.set(key, value),
+            close: () => {
+                primary.clear();
+                secondary.clear();
+            },
+        };
+    }
+    if (name === 'cacheable' || name === 'cache-manager') {
+        const stores = [0, 1].map(
+            () =>
+                new Keyv({
+                    store: new Map(),
+                    serialize: undefined,
+                    deserialize: undefined,
+                    useKeyPrefix: false,
+                    throwOnErrors: true,
+                }),
+        );
+        for (const store of stores)
+            store.on('error', (error) => {
+                throw error;
+            });
+        const cache =
+            name === 'cacheable'
+                ? new Cacheable({
+                      primary: stores[0],
+                      secondary: stores[1],
+                      ttl: TTL,
+                      nonBlocking: false,
+                      stats: false,
+                  })
+                : createCache({ stores, ttl: TTL, nonBlocking: false });
+        cache.on('error', (event) => {
+            throw event.error ?? event;
+        });
+        // cache-manager иначе может представить ошибку чтения как обычный miss.
+        if (name === 'cache-manager')
+            cache.on('get', (event) => {
+                if (event.error) throw event.error;
+            });
+        return {
+            get: (key) => cache.get(key),
+            set: (key, value) => cache.set(key, value, TTL),
+            close: async () => {
+                await Promise.all(stores.map((store) => store.clear()));
+                await cache.disconnect();
+            },
+        };
+    }
+    assert.equal(name, 'lru-cache');
+    const cache = new LRUCache({
+        max: capacity,
+        ttl: TTL,
+        ttlResolution: 0,
+        ttlAutopurge: false,
+        updateAgeOnGet: false,
+        allowStale: false,
+    });
     return {
-      get: (key) => cache.get(key),
-      set: (key, value) => cache.set(key, value),
-      close: () => { primary.clear(); secondary.clear(); },
+        get: (key) => cache.get(key),
+        set: (key, value) => cache.set(key, value),
+        close: () => cache.clear(),
     };
-  }
-  if (name === 'cacheable' || name === 'cache-manager') {
-    const stores = [0, 1].map(() => new Keyv({
-      store: new Map(), serialize: undefined, deserialize: undefined,
-      useKeyPrefix: false, throwOnErrors: true,
-    }));
-    for (const store of stores) store.on('error', (error) => { throw error; });
-    const cache = name === 'cacheable'
-      ? new Cacheable({ primary: stores[0], secondary: stores[1], ttl: TTL, nonBlocking: false, stats: false })
-      : createCache({ stores, ttl: TTL, nonBlocking: false });
-    cache.on('error', (event) => { throw event.error ?? event; });
-    // cache-manager иначе может представить ошибку чтения как обычный miss.
-    if (name === 'cache-manager') cache.on('get', (event) => { if (event.error) throw event.error; });
-    return {
-      get: (key) => cache.get(key),
-      set: (key, value) => cache.set(key, value, TTL),
-      close: async () => {
-        await Promise.all(stores.map((store) => store.clear()));
-        await cache.disconnect();
-      },
-    };
-  }
-  assert.equal(name, 'lru-cache');
-  const cache = new LRUCache({
-    max: capacity, ttl: TTL, ttlResolution: 0,
-    ttlAutopurge: false, updateAgeOnGet: false, allowStale: false,
-  });
-  return {
-    get: (key) => cache.get(key),
-    set: (key, value) => cache.set(key, value),
-    close: () => cache.clear(),
-  };
 }
 
 console.log({ node: process.version, operationsPerSample: OPERATIONS, seed: SEED, ...TIMING });
 const values = Array.from({ length: KEYS }, (_, i) => `value:${i}:`.padEnd(PAYLOAD_BYTES, '.'));
 const loader = async (value) => value;
 
-for (const [scenario, missRatio] of [['hot', 0], ['mixed', 0.1], ['cold', 1]]) {
-  const misses = OPERATIONS * missRatio;
-  const preload = scenario === 'cold' ? [] : values.map((value, i) => [`hot:${i}`, value]);
-  const requests = Array.from({ length: OPERATIONS }, (_, i) => {
-    const id = Math.floor(random() * KEYS);
-    return { key: i < misses ? `cold:${i}` : `hot:${id}`, value: values[id] };
-  });
-  // Фиксированная трасса для всех библиотек; cold-ключи уникальны.
-  for (let i = requests.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [requests[i], requests[j]] = [requests[j], requests[i]];
-  }
-  const order = [...libraries];
-  for (let i = order.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [order[i], order[j]] = [order[j], order[i]];
-  }
-  const bench = new Bench({ ...TIMING, throws: true });
-  if (process.env.BENCH_REVERSE === '1') order.reverse();
-  for (const name of order) {
-    let cache;
-    let loads;
-    let setupStarted;
-    bench.add(`${name} (${name === 'lru-cache' ? '1 tier' : '2 tiers'})`, async () => {
-      for (const request of requests) {
-        const result = cache.get(request.key);
-        let value = result instanceof Promise ? await result : result;
-        if (value === undefined) {
-          loads++;
-          value = await loader(request.value);
-          await cache.set(request.key, value);
-        }
-        // Одинаковая проверка каждого значения включена в замер.
-        if (value !== request.value) throw new Error(`Wrong value for ${request.key}`);
-      }
-    }, {
-      // Hooks работают вне таймера, включая прогрев. Новый кэш сохраняет miss ratio.
-      beforeEach: async () => {
-        loads = 0;
-        setupStarted = Date.now();
-        cache = makeCache(name, preload.length + misses + 1);
-        for (const [key, value] of preload) await cache.set(key, value);
-      },
-      afterEach: async () => {
-        try {
-          assert.equal(loads, misses, `${name}: unexpected miss count`);
-          assert.ok(Date.now() - setupStarted < TTL / 2, 'TTL could affect the result');
-        } finally {
-          await cache?.close();
-          cache = undefined;
-        }
-      },
+for (const [scenario, missRatio] of [
+    ['hot', 0],
+    ['mixed', 0.1],
+    ['cold', 1],
+]) {
+    const misses = OPERATIONS * missRatio;
+    const preload = scenario === 'cold' ? [] : values.map((value, i) => [`hot:${i}`, value]);
+    const requests = Array.from({ length: OPERATIONS }, (_, i) => {
+        const id = Math.floor(random() * KEYS);
+        return { key: i < misses ? `cold:${i}` : `hot:${id}`, value: values[id] };
     });
-  }
-  await bench.run();
-  console.log(`\n${scenario}: ${100 * (1 - missRatio)}% hits, ${OPERATIONS} operations/sample`);
-  console.table(bench.table());
+    // Фиксированная трасса для всех библиотек; cold-ключи уникальны.
+    for (let i = requests.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [requests[i], requests[j]] = [requests[j], requests[i]];
+    }
+    const order = [...libraries];
+    for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+    }
+    const bench = new Bench({ ...TIMING, throws: true });
+    if (process.env.BENCH_REVERSE === '1') order.reverse();
+    for (const name of order) {
+        let cache;
+        let loads;
+        let setupStarted;
+        bench.add(
+            `${name} (${name === 'lru-cache' ? '1 tier' : '2 tiers'})`,
+            async () => {
+                for (const request of requests) {
+                    const result = cache.get(request.key);
+                    let value = result instanceof Promise ? await result : result;
+                    if (value === undefined) {
+                        loads++;
+                        value = await loader(request.value);
+                        await cache.set(request.key, value);
+                    }
+                    // Одинаковая проверка каждого значения включена в замер.
+                    if (value !== request.value) throw new Error(`Wrong value for ${request.key}`);
+                }
+            },
+            {
+                // Hooks работают вне таймера, включая прогрев. Новый кэш сохраняет miss ratio.
+                beforeEach: async () => {
+                    loads = 0;
+                    setupStarted = Date.now();
+                    cache = makeCache(name, preload.length + misses + 1);
+                    for (const [key, value] of preload) await cache.set(key, value);
+                },
+                afterEach: async () => {
+                    try {
+                        assert.equal(loads, misses, `${name}: unexpected miss count`);
+                        assert.ok(Date.now() - setupStarted < TTL / 2, 'TTL could affect the result');
+                    } finally {
+                        await cache?.close();
+                        cache = undefined;
+                    }
+                },
+            },
+        );
+    }
+    await bench.run();
+    console.log(`\n${scenario}: ${100 * (1 - missRatio)}% hits, ${OPERATIONS} operations/sample`);
+    console.table(bench.table());
 }

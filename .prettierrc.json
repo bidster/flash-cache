@@ -1,0 +1,12 @@
+{
+  "singleQuote": true,
+  "tabWidth": 4,
+  "printWidth": 120,
+  "proseWrap": "preserve",
+  "overrides": [
+    {
+      "files": ["*.json", "*.yml", "*.yaml", "*.md"],
+      "options": { "tabWidth": 2 }
+    }
+  ]
+}

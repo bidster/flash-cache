@@ -31,90 +31,131 @@ const keys = Array.from({ length: KEYS }, (_, i) => `key:${i}`);
 console.log({ node: process.version, operationsPerSample: KEYS, ...TIMING });
 
 for (const mode of ['fresh', 'SWR foreground', 'SWR full-cycle']) {
-  const stale = mode !== 'fresh';
-  const bench = new Bench({ ...TIMING, throws: true });
-  const order = ['FlashCache.getOrSet', 'cache-manager.wrap'];
-  if (process.env.BENCH_REVERSE === '1') order.reverse();
-  for (const name of order) {
-    let read, stores, close, release, watchdog, started;
-    let loads, timedOut;
-    const loadedKeys = new Set();
-    bench.add(name, async () => {
-      for (const key of keys) {
-        const result = read(key);
-        const value = result instanceof Promise ? await result : result;
-        if (value !== oldValue) throw new Error(`${name}: expected the original cached value`);
-      }
-      if (mode === 'SWR full-cycle') {
-        release();
-        await setImmediate();
-      }
-    }, {
-      beforeEach: () => {
-        loads = 0;
-        timedOut = false;
-        loadedKeys.clear();
-        started = Date.now();
-        const pending = new Promise((resolve) => { release = resolve; });
-        // Не даём ошибочной реализации, ожидающей loader, навсегда повесить тест.
-        watchdog = setTimeout(() => { timedOut = true; release(); }, 5000);
-        const loader = async (key) => { loads++; loadedKeys.add(key); await pending; return newValue; };
-        const time = started - (stale ? TTL * 0.75 : 0);
-        if (name === 'FlashCache.getOrSet') {
-          stores = [new MapStore(), new MapStore()];
-          const cache = new FlashCache(stores[0], stores[1], {
-            ttl: TTL, staleRatio: 0.5, namespace: false,
-          });
-          for (const key of keys) {
-            for (const store of stores) store.set(key, { value: oldValue, time, staleAt: time + TTL / 2, expAt: time + TTL });
-          }
-          read = (key) => cache.getOrSet(key, () => loader(key));
-          close = () => { for (const store of stores) store.clear(); };
-        } else {
-          stores = [0, 1].map(() => new Keyv({
-            store: new Map(), serialize: undefined, deserialize: undefined,
-            useKeyPrefix: false, throwOnErrors: true,
-          }));
-          for (const store of stores) {
-            store.on('error', (error) => { throw error; });
-            for (const key of keys) store.store.set(key, { value: oldValue, expires: time + TTL });
-          }
-          const cache = createCache({ stores, ttl: TTL, refreshThreshold: TTL / 2, refreshAllStores: true, nonBlocking: false });
-          cache.on('refresh', (event) => { if (event.error) throw event.error; });
-          read = (key) => cache.wrap(key, () => loader(key));
-          close = async () => {
-            await Promise.all(stores.map((store) => store.clear()));
-            await cache.disconnect();
-          };
-        }
-      },
-      afterEach: async () => {
-        clearTimeout(watchdog);
-        release();
-        try {
-          // Для этих in-memory stores все Promise-цепочки завершаются до следующей фазы event loop.
-          await setImmediate();
-          assert.equal(timedOut, false, 'The foreground request waited for the blocked loader');
-          assert.ok(Date.now() - started < TTL / 4, 'Entry age crossed a state boundary');
-          assert.equal(loads, stale ? KEYS : 0);
-          assert.equal(loadedKeys.size, stale ? KEYS : 0);
-          for (const key of keys) {
-            for (const store of stores) {
-              const value = await store.get(key);
-              assert.equal(name === 'FlashCache.getOrSet' ? value.value : value, stale ? newValue : oldValue);
-            }
-            const result = read(key);
-            assert.equal(result instanceof Promise ? await result : result, stale ? newValue : oldValue);
-          }
-          await setImmediate();
-          assert.equal(loads, stale ? KEYS : 0, 'Updated entries must be fresh, without another refresh');
-        } finally {
-          await close();
-        }
-      },
-    });
-  }
-  await bench.run();
-  console.log(`\ngetOrSet ${mode}, ${KEYS} operations/sample`);
-  console.table(bench.table());
+    const stale = mode !== 'fresh';
+    const bench = new Bench({ ...TIMING, throws: true });
+    const order = ['FlashCache.getOrSet', 'cache-manager.wrap'];
+    if (process.env.BENCH_REVERSE === '1') order.reverse();
+    for (const name of order) {
+        let read, stores, close, release, watchdog, started;
+        let loads, timedOut;
+        const loadedKeys = new Set();
+        bench.add(
+            name,
+            async () => {
+                for (const key of keys) {
+                    const result = read(key);
+                    const value = result instanceof Promise ? await result : result;
+                    if (value !== oldValue) throw new Error(`${name}: expected the original cached value`);
+                }
+                if (mode === 'SWR full-cycle') {
+                    release();
+                    await setImmediate();
+                }
+            },
+            {
+                beforeEach: () => {
+                    loads = 0;
+                    timedOut = false;
+                    loadedKeys.clear();
+                    started = Date.now();
+                    const pending = new Promise((resolve) => {
+                        release = resolve;
+                    });
+                    // Не даём ошибочной реализации, ожидающей loader, навсегда повесить тест.
+                    watchdog = setTimeout(() => {
+                        timedOut = true;
+                        release();
+                    }, 5000);
+                    const loader = async (key) => {
+                        loads++;
+                        loadedKeys.add(key);
+                        await pending;
+                        return newValue;
+                    };
+                    const time = started - (stale ? TTL * 0.75 : 0);
+                    if (name === 'FlashCache.getOrSet') {
+                        stores = [new MapStore(), new MapStore()];
+                        const cache = new FlashCache(stores[0], stores[1], {
+                            ttl: TTL,
+                            staleRatio: 0.5,
+                            namespace: false,
+                        });
+                        for (const key of keys) {
+                            for (const store of stores)
+                                store.set(key, { value: oldValue, time, staleAt: time + TTL / 2, expAt: time + TTL });
+                        }
+                        read = (key) => cache.getOrSet(key, () => loader(key));
+                        close = () => {
+                            for (const store of stores) store.clear();
+                        };
+                    } else {
+                        stores = [0, 1].map(
+                            () =>
+                                new Keyv({
+                                    store: new Map(),
+                                    serialize: undefined,
+                                    deserialize: undefined,
+                                    useKeyPrefix: false,
+                                    throwOnErrors: true,
+                                }),
+                        );
+                        for (const store of stores) {
+                            store.on('error', (error) => {
+                                throw error;
+                            });
+                            for (const key of keys) store.store.set(key, { value: oldValue, expires: time + TTL });
+                        }
+                        const cache = createCache({
+                            stores,
+                            ttl: TTL,
+                            refreshThreshold: TTL / 2,
+                            refreshAllStores: true,
+                            nonBlocking: false,
+                        });
+                        cache.on('refresh', (event) => {
+                            if (event.error) throw event.error;
+                        });
+                        read = (key) => cache.wrap(key, () => loader(key));
+                        close = async () => {
+                            await Promise.all(stores.map((store) => store.clear()));
+                            await cache.disconnect();
+                        };
+                    }
+                },
+                afterEach: async () => {
+                    clearTimeout(watchdog);
+                    release();
+                    try {
+                        // Для этих in-memory stores все Promise-цепочки завершаются до следующей фазы event loop.
+                        await setImmediate();
+                        assert.equal(timedOut, false, 'The foreground request waited for the blocked loader');
+                        assert.ok(Date.now() - started < TTL / 4, 'Entry age crossed a state boundary');
+                        assert.equal(loads, stale ? KEYS : 0);
+                        assert.equal(loadedKeys.size, stale ? KEYS : 0);
+                        for (const key of keys) {
+                            for (const store of stores) {
+                                const value = await store.get(key);
+                                assert.equal(
+                                    name === 'FlashCache.getOrSet' ? value.value : value,
+                                    stale ? newValue : oldValue,
+                                );
+                            }
+                            const result = read(key);
+                            assert.equal(
+                                result instanceof Promise ? await result : result,
+                                stale ? newValue : oldValue,
+                            );
+                        }
+                        await setImmediate();
+                        assert.equal(loads, stale ? KEYS : 0, 'Updated entries must be fresh, without another refresh');
+                    } finally {
+                        await close();
+                    }
+                },
+            },
+        );
+    }
+    await bench.run();
+    console.log(`\ngetOrSet ${mode}, ${KEYS} operations/sample`);
+    console.table(bench.table());
 }

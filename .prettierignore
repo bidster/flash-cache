@@ -1,0 +1,9 @@
+**/node_modules/
+dist/
+tmp/
+out-tsc/
+.cursor/
+.idea/
+bench/*.json
+!bench/package.json
+yarn.lock
