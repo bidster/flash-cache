@@ -9,6 +9,7 @@ export interface FlashCacheOptions {
 
 export interface SetOptions {
     customTtl?: number;
+    customStaleRatio?: number;
 }
 
 export interface GetOptions<T> {
@@ -127,8 +128,12 @@ export class FlashCache<T = unknown> {
         this.detach(storedKey);
         const ttl = options.customTtl ?? this.ttl;
         if (!Number.isInteger(ttl) || ttl <= 0) throw new Error('customTtl must be a positive integer in milliseconds');
+        const staleRatio = options.customStaleRatio ?? this.staleRatio;
+        if (!Number.isFinite(staleRatio) || staleRatio < 0 || staleRatio > 1) {
+            throw new Error('customStaleRatio must be a finite number between 0 and 1');
+        }
         if (value === undefined) throw new Error('undefined values cannot be cached');
-        return this.publish(key, storedKey, value, ttl);
+        return this.publish(key, storedKey, value, ttl, staleRatio);
     }
 
     delete(key: string): MayBePromise<void> {
@@ -230,11 +235,15 @@ export class FlashCache<T = unknown> {
     ): MayBePromise<CacheableValue<T>> {
         const ttl = options.customTtl ?? this.ttl;
         if (!Number.isInteger(ttl) || ttl <= 0) throw new Error('customTtl must be a positive integer in milliseconds');
+        const staleRatio = options.customStaleRatio ?? this.staleRatio;
+        if (!Number.isFinite(staleRatio) || staleRatio < 0 || staleRatio > 1) {
+            throw new Error('customStaleRatio must be a finite number between 0 and 1');
+        }
         const loaded = factory();
         const persist = (value: CacheableValue<T>): MayBePromise<CacheableValue<T>> => {
             if (value === undefined) throw new Error('undefined values cannot be cached');
             if (!publication.active) return value;
-            const written = this.publish(key, storedKey, value, ttl, publication);
+            const written = this.publish(key, storedKey, value, ttl, staleRatio, publication);
             return written instanceof Promise ? written.then(() => value) : value;
         };
         return loaded instanceof Promise ? loaded.then(persist) : persist(loaded);
@@ -245,10 +254,11 @@ export class FlashCache<T = unknown> {
         storedKey: string,
         value: CacheableValue<T>,
         ttl: number,
+        staleRatio: number,
         publication?: Publication,
     ): MayBePromise<void> {
         const time = Date.now();
-        const entry = { value, time, staleAt: time + ttl * this.staleRatio, expAt: time + ttl };
+        const entry = { value, time, staleAt: time + ttl * staleRatio, expAt: time + ttl };
         this.primary.set(storedKey, entry);
         if (publication && !publication.active) return;
         try {

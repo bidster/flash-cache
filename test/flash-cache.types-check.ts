@@ -64,3 +64,10 @@ cache.memoize('x', () => 'value');
 
 // @ts-expect-error store errors require no special exported class
 import { StoreTransformError } from '../dist/esm/index';
+
+cache.getOrSet('ratio', () => 'value', { customStaleRatio: 0.2 });
+cache.set('ratio', 'value', { customStaleRatio: 0.2 });
+// @ts-expect-error stale ratio must be a number
+cache.getOrSet('ratio', () => 'value', { customStaleRatio: '0.2' });
+// @ts-expect-error direct get does not set lifetime options
+cache.get('ratio', { customStaleRatio: 0.2 });

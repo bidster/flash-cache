@@ -33,23 +33,26 @@ describe('cache lifetime and refresh', () => {
         expect(factory).toHaveBeenCalledTimes(1);
     });
 
-    it('applies custom TTL only to new values and preserves L2 timestamps', () => {
+    it('applies custom lifetime only to new values and preserves L1/L2 timestamps', () => {
         vi.useFakeTimers();
         vi.setSystemTime(1000);
         const primary = new MapStore<number>();
         const secondary = new MapStore<number>();
         const cache = new FlashCache(primary, secondary, { ttl: 1000, staleRatio: 0.5, namespace: false });
-        cache.getOrSet('x', () => 1, { customTtl: 200 });
-        expect(secondary.get('x')).toEqual({ value: 1, time: 1000, staleAt: 1100, expAt: 1200 });
+        cache.getOrSet('x', () => 1, { customTtl: 200, customStaleRatio: 0.75 });
+        expect(secondary.get('x')).toEqual({ value: 1, time: 1000, staleAt: 1150, expAt: 1200 });
+        expect(cache.getOrSet('x', () => 2, { customStaleRatio: NaN })).toBe(1);
+        expect(primary.get('x')?.staleAt).toBe(1150);
         primary.clear();
         vi.setSystemTime(1050);
-        expect(cache.getOrSet('x', () => 2, { customTtl: NaN })).toBe(1);
+        expect(cache.getOrSet('x', () => 2, { customTtl: NaN, customStaleRatio: NaN })).toBe(1);
         expect(primary.get('x')).toEqual(secondary.get('x'));
-        cache.set('y', 3, { customTtl: 400 });
+        cache.set('y', 3, { customTtl: 400, customStaleRatio: 0.25 });
+        expect(primary.get('y')?.staleAt).toBe(1150);
         expect(primary.get('y')?.expAt).toBe(1450);
     });
 
-    it('uses the first caller factory and TTL for a shared load', async () => {
+    it('uses the first caller factory, TTL and stale ratio for a shared load', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(1000);
         const primary = new MapStore<number>();
@@ -61,14 +64,60 @@ describe('cache lifetime and refresh', () => {
                 new Promise<number>((done) => {
                     resolve = done;
                 }),
-            { customTtl: 300 },
+            { customTtl: 300, customStaleRatio: 0.2 },
         );
         const otherFactory = vi.fn(() => 2);
-        const second = cache.getOrSet('x', otherFactory, { customTtl: 900 });
+        const second = cache.getOrSet('x', otherFactory, { customTtl: 900, customStaleRatio: 0.9 });
         resolve(1);
         expect(await Promise.all([first, second])).toEqual([1, 1]);
         expect(primary.get('x')?.expAt).toBe(1300);
+        expect(primary.get('x')?.staleAt).toBe(1060);
         expect(otherFactory).not.toHaveBeenCalled();
+    });
+
+    it.each([0, 0.25, 1])('overrides stale ratio without changing TTL or other keys (ratio=%s)', (customStaleRatio) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        const primary = new MapStore<number>();
+        const secondary = new MapStore<number>();
+        const cache = new FlashCache(primary, secondary, { ttl: 1000, staleRatio: 0.8, namespace: false });
+        expect(cache.getOrSet('loaded', () => 1, { customStaleRatio })).toBe(1);
+        expect(cache.set('set', 2, { customStaleRatio })).toBeUndefined();
+        for (const key of ['loaded', 'set']) {
+            expect(primary.get(key)).toMatchObject({ staleAt: 1000 + 1000 * customStaleRatio, expAt: 2000 });
+            expect(secondary.get(key)).toEqual(primary.get(key));
+        }
+        cache.getOrSet('default', () => 3);
+        expect(primary.get('default')?.staleAt).toBe(1800);
+    });
+
+    it.each([-0.1, 1.1, NaN, Infinity, -Infinity])(
+        'rejects invalid custom stale ratio before loading or writing (%s)',
+        (customStaleRatio) => {
+            const primary = new MapStore<number>();
+            const secondary = new MapStore<number>();
+            const cache = new FlashCache(primary, secondary, { ttl: 1000, staleRatio: 0.8, namespace: false });
+            const factory = vi.fn(() => 1);
+            expect(() => cache.getOrSet('x', factory, { customStaleRatio })).toThrow('customStaleRatio');
+            expect(() => cache.set('y', 2, { customStaleRatio })).toThrow('customStaleRatio');
+            expect(factory).not.toHaveBeenCalled();
+            expect(primary.size).toBe(0);
+            expect(secondary.size).toBe(0);
+            expect(cache.getOrSet('x', factory)).toBe(1);
+            expect(factory).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    it('uses a new custom stale ratio when refreshing an existing key', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+        const primary = new MapStore<number>();
+        const cache = new FlashCache(primary, new MapStore<number>(), { ttl: 1000, staleRatio: 0.8, namespace: false });
+        cache.set('x', 1, { customStaleRatio: 0.1 });
+        vi.setSystemTime(1100);
+        expect(cache.getOrSet('x', async () => 2, { customStaleRatio: 0.5 })).toBe(1);
+        await Promise.resolve();
+        expect(primary.get('x')).toEqual({ value: 2, time: 1100, staleAt: 1600, expAt: 2100 });
     });
 
     it('isolates namespaces and supports disabling the prefix', () => {
