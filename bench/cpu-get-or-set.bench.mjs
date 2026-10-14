@@ -7,7 +7,7 @@ import { cpus, release } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setImmediate } from 'node:timers/promises';
-import { FlashCache, FlashMemo, MapStore } from '@bidster/flash-cache';
+import { FlashCache, MapStore } from '../dist/cjs/index.js';
 import { Cacheable } from 'cacheable';
 import { createCache } from 'cache-manager';
 import { Keyv } from 'keyv';
@@ -28,11 +28,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 const TTL = 3_600_000;
 const KEYS = 1024;
-const libraries = ['flash-memo', 'cacheable', 'cache-manager'];
+const libraries = ['flash-cache', 'cacheable', 'cache-manager'];
 const scenarios = ['l1', 'l2', 'mixed', 'cold', 'swr'];
 const values = Array.from({ length: KEYS }, (_, id) => ({ id, payload: '.'.repeat(256) }));
 const updated = values.map((value) => ({ ...value, updated: true }));
-const options = { useClones: false };
 
 function makeRequests(scenario, operations) {
   const misses = scenario === 'cold' ? operations : scenario === 'mixed' ? operations / 10 : 0;
@@ -71,11 +70,10 @@ async function worker(library, scenario, kind, profilePath) {
     return scenario === 'swr' ? payloads.get(key).updated : payloads.get(key).value;
   };
   let cache, read, stores;
-  if (library === 'flash-memo') {
+  if (library === 'flash-cache') {
     stores = [new MapStore(), new MapStore()];
     cache = new FlashCache(stores[0], stores[1], { ttl: TTL, staleRatio: scenario === 'swr' ? 0.5 : 1, namespace: false });
-    const memo = new FlashMemo(cache);
-    read = (key) => memo.memoize(key, () => loader(key), options);
+    read = (key) => cache.getOrSet(key, () => loader(key));
   } else {
     stores = [0, 1].map(() => new Keyv({
       store: new Map(), serialize: undefined, deserialize: undefined,
@@ -98,14 +96,14 @@ async function worker(library, scenario, kind, profilePath) {
   async function prepare() {
     loads = 0;
     loaderBarrier = new Promise((resolveBarrier) => { releaseLoader = resolveBarrier; });
-    for (const store of stores) (library === 'flash-memo' ? store : store.store).clear();
+    for (const store of stores) (library === 'flash-cache' ? store : store.store).clear();
     const preload = scenario === 'cold' ? [] : scenario === 'l2' || scenario === 'swr' ? requests
       : Array.from({ length: KEYS }, (_, i) => ({ key: `hot:${i}`, value: values[i] }));
     const time = Date.now() - (scenario === 'swr' ? TTL * 0.75 : 0);
     for (const request of preload) {
       for (let i = 0; i < stores.length; i++) {
         if (scenario === 'l2' && i === 0) continue;
-        if (library === 'flash-memo') {
+        if (library === 'flash-cache') {
           stores[i].set(request.key, { value: request.value, time, staleAt: time + TTL * (scenario === 'swr' ? 0.5 : 1), expAt: time + TTL });
         } else {
           stores[i].store.set(request.key, { value: request.value, expires: time + TTL });
@@ -129,11 +127,11 @@ async function worker(library, scenario, kind, profilePath) {
   async function verify() {
     assert.equal(loads, scenario === 'swr' ? operations : misses, 'Unexpected loader count');
     const expectedSize = scenario === 'cold' || scenario === 'l2' || scenario === 'swr' ? operations : KEYS + misses;
-    for (const store of stores) assert.equal((library === 'flash-memo' ? store : store.store).size, expectedSize);
+    for (const store of stores) assert.equal((library === 'flash-cache' ? store : store.store).size, expectedSize);
     for (const request of requests) {
       for (const store of stores) {
         const value = await store.get(request.key);
-        assert.equal(library === 'flash-memo' ? value.value : value, scenario === 'swr' ? request.updated : request.value);
+        assert.equal(library === 'flash-cache' ? value.value : value, scenario === 'swr' ? request.updated : request.value);
       }
     }
   }
@@ -172,7 +170,7 @@ async function worker(library, scenario, kind, profilePath) {
     }
     await verify();
   } while (kind === 'measure' && (userUs + systemUs < 400_000 || samples < 16));
-  if (library !== 'flash-memo') await cache.disconnect();
+  if (library !== 'flash-cache') await cache.disconnect();
   return {
     library, scenario, kind, operations: operations * samples, operationsPerSample: operations, samples,
     cpuNsPerOp: (userUs + systemUs) * 1000 / (operations * samples),
@@ -201,21 +199,21 @@ function summarizeProfile(profile) {
 if (process.argv[2] === '--worker') {
   console.log(JSON.stringify(await worker(...process.argv.slice(3))));
 } else {
-  const output = resolve(process.env.BENCH_OUTPUT || join(here, 'cpu-memo-wrap.results.json'));
-  const profileDirectory = join(root, 'tmp', 'cpu-memo-wrap', new Date().toISOString().replaceAll(':', '-'));
+  const output = resolve(process.env.BENCH_OUTPUT || join(here, 'cpu-get-or-set.results.json'));
+  const profileDirectory = join(root, 'tmp', 'cpu-get-or-set', new Date().toISOString().replaceAll(':', '-'));
   await mkdir(profileDirectory, { recursive: true });
   const packageVersions = {};
   for (const name of ['cacheable', 'cache-manager', 'keyv', '@cacheable/utils']) {
     packageVersions[name] = JSON.parse(await readFile(join(here, 'node_modules', name, 'package.json'), 'utf8')).version;
   }
   const sourceSha256 = {};
-  for (const path of ['src/flash-cache.ts', 'src/flash-memo.ts', 'src/utils/singleflight.ts', 'bench/cpu-memo-wrap.bench.mjs']) {
+  for (const path of ['src/flash-cache.ts', 'src/types.ts', 'src/stores/serialized-store.ts', 'bench/cpu-get-or-set.bench.mjs']) {
     sourceSha256[path] = createHash('sha256').update(await readFile(join(root, path))).digest('hex');
   }
   const metadata = {
     recordedAt: new Date().toISOString(), node: process.version, platform: process.platform, arch: process.arch,
     os: release(), cpu: cpus()[0].model, gitHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
-    packageVersions, sourceSha256, stores: ['Map', 'Map'], useClones: false, valueSerialization: false,
+    packageVersions, sourceSha256, stores: ['Map', 'Map'], cloning: false, valueSerialization: false,
     ttl: TTL, payload: 'object with id and 256-character string', cpuTargetUsPerWorker: 400_000,
     repetitions: 3, samplingIntervalUs: 1000, profileDirectory,
     notes: [
@@ -254,7 +252,7 @@ if (process.argv[2] === '--worker') {
   }
   const summary = [];
   for (const scenario of scenarios) {
-    const flash = runs.filter((run) => run.scenario === scenario && run.library === 'flash-memo').map((run) => run.cpuNsPerOp).sort((a, b) => a - b)[1];
+    const flash = runs.filter((run) => run.scenario === scenario && run.library === 'flash-cache').map((run) => run.cpuNsPerOp).sort((a, b) => a - b)[1];
     for (const library of libraries) {
       const matching = runs.filter((run) => run.scenario === scenario && run.library === library);
       if (!matching.length) continue;

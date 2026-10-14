@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { FlashCache, MapStore } from '@bidster/flash-cache';
+import { FlashCache, MapStore } from '../dist/cjs/index.js';
 import { LRUCache } from 'lru-cache';
 import { Bench } from 'tinybench';
 
 // Свежие L1-hit: одинаковый LRU, max и последовательность ключей, без eviction.
 // TTL самого LRU выключен у обоих: FlashCache добавляет собственные проверки TTL,
-// метаданные записи, namespace:false и объект CacheResult — это часть overhead.
+// метаданные записи и namespace:false — это часть overhead.
 // Третий участник намеренно делает лишний await для оценки стоимости этого вызова.
 // Один async-вызов Tinybench обрабатывает всю трассу; sync-пути не await-ятся в цикле.
 // Для ns/op делите latency таблицы на OPERATIONS. BENCH_REVERSE=1 меняет порядок.
@@ -38,7 +38,7 @@ for (const name of order) {
         const cache = new FlashCache(primary, secondary, { ttl: TTL, staleRatio: 1, namespace: false });
         for (let i = 0; i < KEYS; i++) await cache.set(`key:${i}`, value);
         assert.ok(!(cache.get('key:0') instanceof Promise));
-        read = (key) => cache.get(key).value;
+        read = (key) => cache.get(key);
       }
     },
     afterEach: () => {

@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { cpus, release } from 'node:os';
-import { FlashCache, FlashMemo, MapStore } from '@bidster/flash-cache';
+import { FlashCache, MapStore } from '../dist/cjs/index.js';
 import { Cacheable } from 'cacheable';
 import { Keyv } from 'keyv';
 import { Bench } from 'tinybench';
 
-// После yarn build в корне: cd bench && npm run bench:flash-memo-cacheable.
+// После yarn build в корне: cd bench && npm run bench:get-or-set-cacheable.
 // У обоих два Map-уровня, TTL 1 час, без клонирования и сериализации значений.
 // У Keyv + Map нет useClones: serialize/deserialize:undefined сохраняют ссылки.
 // Cacheable.wrap получает готовый ключ через createKey. В версии 2.5.0 wrap
 // всё равно сначала вычисляет стандартный hash аргументов — его стоимость входит
-// в замер. FlashMemo принимает готовый ключ непосредственно.
+// в замер. FlashCache принимает готовый ключ непосредственно.
 // Только последовательные запросы, async loader без I/O, без SWR и eviction.
-// Await только для Promise: синхронный hit FlashMemo сохраняет быстрый путь.
+// Await только для Promise: синхронный hit FlashCache сохраняет быстрый путь.
 // Новый кэш перед каждой трассой; подготовка и проверки stores вне таймера.
 // Проверка ссылки каждого результата внутри таймера гарантирует отсутствие clones.
 // ns/op — среднее время всей трассы / число запросов; это НЕ request p99.
@@ -27,7 +27,7 @@ const results = [];
 const metadata = {
   node: process.version, platform: process.platform, os: release(), cpu: cpus()[0].model,
   flashCache: 'current working tree', cacheable: '2.5.0', keyv: '5.6.0',
-  stores: ['Map', 'Map'], useClones: false, valueSerialization: false,
+  stores: ['Map', 'Map'], cloning: false, valueSerialization: false,
   ttl: TTL, keys: KEYS, payload: 'object with id and 256-character string',
   order: process.env.BENCH_REVERSE === '1' ? 'reverse' : 'normal', ...TIMING,
 };
@@ -50,7 +50,7 @@ for (const [scenario, missRatio] of [['L1 hit', 0], ['L2 hit', 0], ['mixed 10% m
     [requests[i], requests[j]] = [requests[j], requests[i]];
   }
   const payloads = new Map(requests.map(({ key, value }) => [key, value]));
-  const order = ['FlashMemo.memoize', 'Cacheable.wrap'];
+  const order = ['FlashCache.getOrSet', 'Cacheable.wrap'];
   if (process.env.BENCH_REVERSE === '1') order.reverse();
   const bench = new Bench({ ...TIMING, throws: true });
   for (const name of order) {
@@ -66,16 +66,15 @@ for (const [scenario, missRatio] of [['L1 hit', 0], ['L2 hit', 0], ['mixed 10% m
         loads = 0;
         started = Date.now();
         const loader = async (key) => { loads++; return payloads.get(key); };
-        if (name === 'FlashMemo.memoize') {
+        if (name === 'FlashCache.getOrSet') {
           stores = [new MapStore(), new MapStore()];
           assert.ok(stores.every((store) => store instanceof Map));
           const cache = new FlashCache(stores[0], stores[1], {
             ttl: TTL, staleRatio: 1, namespace: false,
           });
-          const memo = new FlashMemo(cache);
           for (const [key, value] of preload) await cache.set(key, value);
           if (scenario === 'L2 hit') stores[0].clear();
-          read = (key) => memo.memoize(key, () => loader(key), { useClones: false });
+          read = (key) => cache.getOrSet(key, () => loader(key));
           close = () => { for (const store of stores) store.clear(); };
         } else {
           stores = [0, 1].map(() => new Keyv({
@@ -100,11 +99,11 @@ for (const [scenario, missRatio] of [['L1 hit', 0], ['L2 hit', 0], ['mixed 10% m
         try {
           assert.equal(loads, misses, `${name}: unexpected loader count`);
           assert.ok(Date.now() - started < TTL / 2, 'TTL could affect the result');
-          assert.equal(name === 'FlashMemo.memoize' ? stores[0].size : stores[0].store.size, preload.length + misses);
+          assert.equal(name === 'FlashCache.getOrSet' ? stores[0].size : stores[0].store.size, preload.length + misses);
           for (const request of requests) {
             for (const store of stores) {
               const stored = await store.get(request.key);
-              assert.equal(name === 'FlashMemo.memoize' ? stored.value : stored, request.value);
+              assert.equal(name === 'FlashCache.getOrSet' ? stored.value : stored, request.value);
             }
           }
         } finally {

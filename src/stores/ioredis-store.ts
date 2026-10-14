@@ -1,5 +1,5 @@
 import { Redis } from 'ioredis';
-import { MayBeAsyncStore, StoreValue } from '../flash-cache.js';
+import type { MayBeAsyncStore, StoreValue } from '../types.js';
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };

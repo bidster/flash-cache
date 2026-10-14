@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { FlashCache, MapStore } from '@bidster/flash-cache';
+import { FlashCache, MapStore } from '../dist/cjs/index.js';
 import { Cacheable } from 'cacheable';
 import { createCache } from 'cache-manager';
 import { Keyv } from 'keyv';
@@ -42,11 +42,7 @@ function makeCache(name, capacity) {
     const secondary = new MapStore();
     const cache = new FlashCache(primary, secondary, { ttl: TTL, staleRatio: 1, namespace: false });
     return {
-      get: (key) => {
-        const result = cache.get(key);
-        if (result instanceof Promise) return result.then((entry) => entry.state === 'fresh' ? entry.value : undefined);
-        return result.state === 'fresh' ? result.value : undefined;
-      },
+      get: (key) => cache.get(key),
       set: (key, value) => cache.set(key, value),
       close: () => { primary.clear(); secondary.clear(); },
     };

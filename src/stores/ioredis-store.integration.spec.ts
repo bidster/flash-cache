@@ -2,6 +2,7 @@ import Redis from 'ioredis';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { IORedisStore, type JsonValue } from './ioredis-store';
+import {FlashCache, MapStore, SerializedStore} from '../index';
 
 describe('IORedisStore integration', () => {
     let container: StartedTestContainer;
@@ -63,4 +64,47 @@ describe('IORedisStore integration', () => {
 
         await expect(store.get('session:1')).resolves.toBeUndefined();
     });
+    it('runs the cache through Redis with store codecs and synchronous L1 hits', async () => {
+        const l1 = new MapStore<Date>();
+        const secondary = new SerializedStore<Date, JsonValue>(store, {
+            serialize: date => date.toISOString(),
+            deserialize: value => {
+                if (typeof value !== 'string') throw new Error('Expected a date string');
+                return new Date(value);
+            },
+        });
+        const cache = new FlashCache(l1, secondary, {
+            ttl: 10_000, staleRatio: 0.8, namespace: 'integration',
+            cloneValue: date => new Date(date.getTime()),
+        });
+        const date = new Date('2026-01-01T00:00:00Z');
+        expect(await cache.getOrSet('date', () => date)).toEqual(date);
+        const hit = cache.getOrSet('date', async () => new Date(0));
+        expect(hit).not.toBeInstanceOf(Promise);
+        expect(hit).not.toBe(date);
+        l1.clear();
+        expect(await cache.get('date')).toEqual(date);
+        await cache.delete('date');
+        expect(await cache.get('date')).toBeUndefined();
+    });
+
+    it('does not write a detached factory result into Redis', async () => {
+        const cache = new FlashCache<JsonValue>(new MapStore<JsonValue>(), store, {
+            ttl: 10_000, staleRatio: 0.8, namespace: 'integration',
+        });
+        let finish!: (value: JsonValue) => void;
+        let started!: () => void;
+        const loading = new Promise<void>(resolve => { started = resolve; });
+        const pending = cache.getOrSet('detached', () => {
+            started();
+            return new Promise<JsonValue>(resolve => { finish = resolve; });
+        });
+        await loading;
+        await cache.set('detached', 'new');
+        finish('old');
+        expect(await pending).toBe('old');
+        expect(await store.get('flashCache:v2:integration:detached')).toMatchObject({value: 'new'});
+        await cache.delete('detached');
+    });
+
 });

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
-import { FlashCache, FlashMemo, MapStore } from '@bidster/flash-cache';
+import { FlashCache, MapStore } from '../dist/cjs/index.js';
 import { createCache } from 'cache-manager';
 import { Keyv } from 'keyv';
 import { Bench } from 'tinybench';
 
-// npm run bench:memoize после yarn build в корне. Два Map-уровня, без сериализации.
-// Сравниваем fresh memo-hit и выдачу stale с запуском обновления (SWR).
+// npm run bench:get-or-set после yarn build в корне. Два Map-уровня, без сериализации.
+// Сравниваем fresh getOrSet-hit и выдачу stale с запуском обновления (SWR).
 // Каждая трасса обращается к 1024 разным ключам один раз. В SWR оба участника
 // возвращают старую строку и запускают ровно один loader на ключ.
 // Loader ждёт общего барьера до конца замера: данные не успевают стать fresh
@@ -33,7 +33,7 @@ console.log({ node: process.version, operationsPerSample: KEYS, ...TIMING });
 for (const mode of ['fresh', 'SWR foreground', 'SWR full-cycle']) {
   const stale = mode !== 'fresh';
   const bench = new Bench({ ...TIMING, throws: true });
-  const order = ['FlashMemo.memoize', 'cache-manager.wrap'];
+  const order = ['FlashCache.getOrSet', 'cache-manager.wrap'];
   if (process.env.BENCH_REVERSE === '1') order.reverse();
   for (const name of order) {
     let read, stores, close, release, watchdog, started;
@@ -60,15 +60,15 @@ for (const mode of ['fresh', 'SWR foreground', 'SWR full-cycle']) {
         watchdog = setTimeout(() => { timedOut = true; release(); }, 5000);
         const loader = async (key) => { loads++; loadedKeys.add(key); await pending; return newValue; };
         const time = started - (stale ? TTL * 0.75 : 0);
-        if (name === 'FlashMemo.memoize') {
+        if (name === 'FlashCache.getOrSet') {
           stores = [new MapStore(), new MapStore()];
-          const memo = new FlashMemo(new FlashCache(stores[0], stores[1], {
+          const cache = new FlashCache(stores[0], stores[1], {
             ttl: TTL, staleRatio: 0.5, namespace: false,
-          }));
+          });
           for (const key of keys) {
             for (const store of stores) store.set(key, { value: oldValue, time, staleAt: time + TTL / 2, expAt: time + TTL });
           }
-          read = (key) => memo.memoize(key, () => loader(key));
+          read = (key) => cache.getOrSet(key, () => loader(key));
           close = () => { for (const store of stores) store.clear(); };
         } else {
           stores = [0, 1].map(() => new Keyv({
@@ -101,7 +101,7 @@ for (const mode of ['fresh', 'SWR foreground', 'SWR full-cycle']) {
           for (const key of keys) {
             for (const store of stores) {
               const value = await store.get(key);
-              assert.equal(name === 'FlashMemo.memoize' ? value.value : value, stale ? newValue : oldValue);
+              assert.equal(name === 'FlashCache.getOrSet' ? value.value : value, stale ? newValue : oldValue);
             }
             const result = read(key);
             assert.equal(result instanceof Promise ? await result : result, stale ? newValue : oldValue);
@@ -115,6 +115,6 @@ for (const mode of ['fresh', 'SWR foreground', 'SWR full-cycle']) {
     });
   }
   await bench.run();
-  console.log(`\nmemoize ${mode}, ${KEYS} operations/sample`);
+  console.log(`\ngetOrSet ${mode}, ${KEYS} operations/sample`);
   console.table(bench.table());
 }
