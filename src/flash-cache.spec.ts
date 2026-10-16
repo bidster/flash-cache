@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FlashCache, MapStore, SerializedStore } from './index';
+import { FlashCache, MapStore } from './index';
 import type { MayBeAsyncStore, StoreValue } from './index';
 
 function deferred<T>() {
@@ -381,16 +381,17 @@ describe('FlashCache', () => {
             }
         }
         const raw = new MapStore<string>();
-        const secondary = new SerializedStore(raw, {
+        const codec = {
             serialize: (user: User) => user.name,
-            deserialize: (name) => new User(name),
-        });
-        const { cache, primary } = setup(secondary);
+            deserialize: (name: string) => new User(name),
+        };
+        const primary = new MapStore<User>();
+        const cache = new FlashCache(primary, raw, { ttl: 60_000, staleRatio: 0.5, namespace: false });
         const cloneValue = (user: User) => new User(user.name);
         const original = new User('Igor');
-        expect((cache.getOrSet('x', () => original, { cloneValue }) as User).greeting()).toBe('Hello Igor');
+        expect((cache.getOrSet('x', () => original, { codec, cloneValue }) as User).greeting()).toBe('Hello Igor');
         primary.clear();
-        const read = cache.get('x', { cloneValue }) as User;
+        const read = cache.get('x', { codec, cloneValue }) as User;
         expect(read.greeting()).toBe('Hello Igor');
         expect(read).not.toBe(original);
         expect(raw.get('x')?.value).toBe('Igor');
@@ -412,18 +413,19 @@ describe('FlashCache', () => {
             : raw;
         const decodeError = new Error('decode');
         const encodeError = new Error('encode');
-        const secondary = new SerializedStore<number, string>(underlying, {
+        const codec = {
             serialize: () => {
                 throw encodeError;
             },
             deserialize: () => {
                 throw decodeError;
             },
-        });
+        };
         const onError = vi.fn();
-        const { cache, primary } = setup(secondary, { onError });
+        const primary = new MapStore<number>();
+        const cache = new FlashCache(primary, underlying, { ttl: 60_000, staleRatio: 0.5, namespace: false, onError });
         const factory = vi.fn(() => 2);
-        expect(await cache.getOrSet('x', factory)).toBe(2);
+        expect(await cache.getOrSet('x', factory, { codec })).toBe(2);
         expect(factory).toHaveBeenCalledTimes(1);
         expect(primary.get('x')?.value).toBe(2);
         expect(onError.mock.calls).toEqual([
@@ -432,7 +434,7 @@ describe('FlashCache', () => {
         ]);
         primary.clear();
         onError.mockClear();
-        expect(await cache.get('x')).toBeUndefined();
+        expect(await cache.get('x', { codec })).toBeUndefined();
         expect(onError).toHaveBeenCalledExactlyOnceWith(decodeError, { key: 'x', operation: 'l2.get' });
     });
 

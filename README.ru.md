@@ -73,24 +73,37 @@ function getUserCount() {
 
 TTL остаётся равным 24 часам, stale начинается примерно через 4–5 минут. Jitter применяется к интервалу до stale в миллисекундах, а результат переводится в долю TTL. Обновление запускается следующим обращением после `staleAt`, а не таймером. [Подробности механики](docs/flash-cache.md#jitter-момента-stale).
 
-## Redis и форматы хранения
+## Redis и преобразования для конкретного ключа
+
+`FlashCache<T>` задаёт тип значения в L1. Преобразования для L2 передаются как `codec` в опциях `getOrSet`, `get` и `set`; тип промежуточного представления выводится из функций вызова. Дополнительный generic экземпляра и реестр codec не нужны.
 
 ```ts
 import Redis from 'ioredis';
-import { FlashCache, IORedisStore, MapStore, SerializedStore } from '@bidster/flash-cache';
+import { FlashCache, IORedisStore, MapStore } from '@bidster/flash-cache';
 
-const redis = new Redis();
-const l2 = new SerializedStore<Date, string>(new MapStore<string>(), {
-  serialize: (date) => date.toISOString(),
-  deserialize: (value) => new Date(value),
+const tagsCache = new FlashCache<Set<string>>(new MapStore<Set<string>>(), new IORedisStore(new Redis()), {
+  ttl: 60_000,
+  staleRatio: 0.8,
 });
-const dates = new FlashCache(new MapStore<Date>(), l2, { ttl: 60_000, staleRatio: 0.8 });
+const codec = {
+  serialize: (value: Set<string>) => [...value],
+  deserialize: (value: string[]) => new Set(value),
+};
 
-// Обычные JSON-данные можно хранить в Redis напрямую.
-const jsonStore = new IORedisStore(redis);
+const tags = await tagsCache.getOrSet('tags', () => new Set(['typescript']), { codec });
+const cached = await tagsCache.get('tags', { codec });
+await tagsCache.set('tags', new Set(['updated']), { codec });
 ```
 
-L1 и L2 предоставляют кешу один тип данных. `SerializedStore` адаптирует физическое представление L2; его также можно использовать поверх `IORedisStore` с типом `JsonValue`. `serialize/deserialize` задаются на store, а не в `getOrSet`.
+В L1 хранится `Set`, в записи L2 — массив. `IORedisStore` сам выполняет JSON-сериализацию записи: `JSON.stringify/parse` в codec не нужны. Без преобразования `Set` сериализовался бы как `{}`.
+
+Обе функции codec синхронны и не должны менять исходное значение. Fresh L1 возвращается синхронно без вызова codec. Для singleflight используется codec первого вызова на чтение и запись; остальные читатели получают уже восстановленное значение и могут применить собственный `cloneValue`.
+
+Все обращения к одному ключу должны использовать совместимые преобразования, включая `get/set`. Без codec значение передаётся как есть: вызывающий код отвечает за совместимость с L2. Чтение закодированного ключа без codec может работать на L1, но вернуть неправильный тип из L2. Codec не запоминается и не сравнивается по ссылке. `SerializedStore` удалён; подключайте L2 напрямую.
+
+## Обёртки Redis-команд
+
+Наследник `IORedisStore` может переопределить protected-методы `read(key)`, `write(key, raw, expAt)` и `remove(key)`, обернув вызовы `super` в circuit breaker или другую политику выполнения. Публичные `get/set/delete` сохраняют JSON-преобразования и абсолютный срок истечения через `PXAT`. Сериализация выполняется до `write`, разбор JSON — после завершения `read`, поэтому ошибки JSON остаются за пределами обёртки команд. [Пример наследника](docs/flash-cache.md#обёртки-redis-команд).
 
 ## Клонирование и ошибки
 
@@ -99,10 +112,10 @@ L1 и L2 предоставляют кешу один тип данных. `Seri
 При ошибке чтения L2 вызывается `onError`. Если повторная проверка не нашла fresh L1, `getOrSet` продолжает через factory, а `get` возвращает `undefined`. Ошибка записи L2 не отменяет успешное получение данных. Обе ошибки сообщаются через `onError`; он также получает ошибки фонового обновления. Причина ошибки внутри L2 не влияет на эту политику: ошибки сериализации обрабатываются так же, как ошибки доступа к хранилищу. Store реализует только `get/set/delete`, без специальных типов ошибок. Ошибки ожидаемой factory, клонирования и удаления L2 передаются вызывающему коду.
 
 ```ts
-const date = await dates.getOrSet('today', () => new Date(), {
-  cloneValue: (value) => new Date(value.getTime()),
+const copy = await tagsCache.get('tags', {
+  codec,
+  cloneValue: (value) => new Set(value),
 });
-const copy = await dates.get('today', { cloneValue: (value) => new Date(value.getTime()) });
 ```
 
 Функция клонирования синхронна и сохраняет тип значения. Её ошибка затрагивает только соответствующего читателя.

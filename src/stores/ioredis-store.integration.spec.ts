@@ -2,7 +2,7 @@ import Redis from 'ioredis';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { IORedisStore, type JsonValue } from './ioredis-store';
-import { FlashCache, MapStore, SerializedStore } from '../index';
+import { FlashCache, MapStore } from '../index';
 
 describe('IORedisStore integration', () => {
     let container: StartedTestContainer;
@@ -64,30 +64,28 @@ describe('IORedisStore integration', () => {
 
         await expect(store.get('session:1')).resolves.toBeUndefined();
     });
-    it('runs the cache through Redis with store codecs and synchronous L1 hits', async () => {
-        const l1 = new MapStore<Date>();
-        const secondary = new SerializedStore<Date, JsonValue>(store, {
-            serialize: (date) => date.toISOString(),
-            deserialize: (value) => {
-                if (typeof value !== 'string') throw new Error('Expected a date string');
-                return new Date(value);
-            },
-        });
-        const cache = new FlashCache(l1, secondary, {
-            ttl: 10_000,
-            staleRatio: 0.8,
-            namespace: 'integration',
-        });
-        const cloneValue = (date: Date) => new Date(date.getTime());
-        const date = new Date('2026-01-01T00:00:00Z');
-        expect(await cache.getOrSet('date', () => date, { cloneValue })).toEqual(date);
-        const hit = cache.getOrSet('date', async () => new Date(0), { cloneValue });
-        expect(hit).not.toBeInstanceOf(Promise);
-        expect(hit).not.toBe(date);
+    it('stores Set values as JSON arrays in Redis and restores them through a call codec', async () => {
+        const l1 = new MapStore<Set<string>>();
+        const cache = new FlashCache(l1, store, { ttl: 10_000, staleRatio: 0.8, namespace: 'integration' });
+        const codec = {
+            serialize: (tags: Set<string>) => [...tags],
+            deserialize: (tags: string[]) => new Set(tags),
+        };
+        const tags = new Set(['typescript', 'cache']);
+        expect(await cache.getOrSet('tags', () => tags, { codec })).toBe(tags);
+        expect(await store.get('flashCache:v2:integration:tags')).toMatchObject({ value: [...tags] });
+        const hit = cache.getOrSet('tags', async () => new Set<string>(), { codec });
+        expect(hit).toBe(tags);
         l1.clear();
-        expect(await cache.get('date', { cloneValue })).toEqual(date);
-        await cache.delete('date');
-        expect(await cache.get('date', { cloneValue })).toBeUndefined();
+        const restored = await cache.get('tags', { codec });
+        expect(restored).toBeInstanceOf(Set);
+        expect(restored).toEqual(tags);
+        expect(l1.get('flashCache:v2:integration:tags')?.value).toBe(restored);
+        await cache.set('tags', new Set(['updated']), { codec });
+        l1.clear();
+        expect(await cache.getOrSet('tags', () => new Set<string>(), { codec })).toEqual(new Set(['updated']));
+        await cache.delete('tags');
+        expect(await cache.get('tags', { codec })).toBeUndefined();
     });
 
     it('does not write a detached factory result into Redis', async () => {

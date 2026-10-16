@@ -7,16 +7,29 @@ export interface FlashCacheOptions {
     onError?: (error: unknown, context: { key: string; operation: 'l2.get' | 'l2.set' | 'refresh' }) => void;
 }
 
-export interface SetOptions {
+// Исключаем Promise/thenable даже при T = unknown, сохраняя null и примитивы.
+type CodecValue<T> = CacheableValue<T> & (string | number | boolean | bigint | symbol | null | { then?: never });
+
+export interface Codec<Value, StoredValue> {
+    serialize: (value: CacheableValue<Value>) => CodecValue<StoredValue>;
+    deserialize: (value: CacheableValue<StoredValue>) => CodecValue<Value>;
+}
+
+interface LifetimeOptions {
     customTtl?: number;
     customStaleRatio?: number;
 }
 
-export interface GetOptions<T> {
+export interface SetOptions<T = unknown, Stored = unknown> extends LifetimeOptions {
+    codec?: Codec<T, Stored>;
+}
+
+export interface GetOptions<T, Stored = unknown> {
+    codec?: Codec<T, Stored>;
     cloneValue?: (value: CacheableValue<T>) => CacheableValue<T>;
 }
 
-export interface GetOrSetOptions<T> extends GetOptions<T>, SetOptions {}
+export interface GetOrSetOptions<T, Stored = unknown> extends GetOptions<T, Stored>, SetOptions<T, Stored> {}
 
 type Publication = { active: boolean };
 type Flight<T> = Publication & {
@@ -34,7 +47,7 @@ export class FlashCache<T = unknown> {
 
     constructor(
         private readonly primary: Store<T>,
-        private readonly secondary: MayBeAsyncStore<T>,
+        private readonly secondary: MayBeAsyncStore<unknown>,
         options: FlashCacheOptions,
     ) {
         if (!Number.isInteger(options.ttl) || options.ttl <= 0) {
@@ -50,10 +63,10 @@ export class FlashCache<T = unknown> {
         this.prefix = options.namespace === false ? '' : `flashCache:v2:${namespace}`;
     }
 
-    getOrSet(
+    getOrSet<Stored = unknown>(
         key: string,
         factory: () => MayBePromise<CacheableValue<T>>,
-        options: GetOrSetOptions<T> = {},
+        options: GetOrSetOptions<T, Stored> = {},
     ): MayBePromise<CacheableValue<T>> {
         const { cloneValue } = options;
         const storedKey = this.prefix + key;
@@ -90,7 +103,10 @@ export class FlashCache<T = unknown> {
             : this.toReader(result, cloneValue);
     }
 
-    get(key: string, options: GetOptions<T> = {}): MayBePromise<CacheableValue<T> | undefined> {
+    get<Stored = unknown>(
+        key: string,
+        options: GetOptions<T, Stored> = {},
+    ): MayBePromise<CacheableValue<T> | undefined> {
         const { cloneValue } = options;
         const storedKey = this.prefix + key;
         const local = this.primary.get(storedKey);
@@ -112,7 +128,7 @@ export class FlashCache<T = unknown> {
         };
         let pending = false;
         try {
-            const read = this.readSecondary(key, storedKey);
+            const read = this.readSecondary(key, storedKey, options.codec);
             if (read instanceof Promise) {
                 pending = true;
                 return read.then(accept).finally(() => this.release(storedKey, publication));
@@ -123,7 +139,11 @@ export class FlashCache<T = unknown> {
         }
     }
 
-    set(key: string, value: CacheableValue<T>, options: SetOptions = {}): MayBePromise<void> {
+    set<Stored = unknown>(
+        key: string,
+        value: CacheableValue<T>,
+        options: SetOptions<T, Stored> = {},
+    ): MayBePromise<void> {
         const storedKey = this.prefix + key;
         this.detach(storedKey);
         const ttl = options.customTtl ?? this.ttl;
@@ -133,7 +153,14 @@ export class FlashCache<T = unknown> {
             throw new Error('customStaleRatio must be a finite number between 0 and 1');
         }
         if (value === undefined) throw new Error('undefined values cannot be cached');
-        return this.publish(key, storedKey, value, ttl, staleRatio);
+        const publication = { active: true };
+        this.track(storedKey, publication);
+        try {
+            return this.publish(key, storedKey, value, ttl, staleRatio, options.codec, publication);
+        } finally {
+            // После запуска записи L2 её уже нельзя отменить; защита нужна только до отправки.
+            this.release(storedKey, publication);
+        }
     }
 
     delete(key: string): MayBePromise<void> {
@@ -145,11 +172,11 @@ export class FlashCache<T = unknown> {
     }
 
     /** Ответ из кеша доступен до завершения обновления; singleflight живёт до завершения всего цикла. */
-    private load(
+    private load<Stored>(
         key: string,
         storedKey: string,
         factory: () => MayBePromise<CacheableValue<T>>,
-        options: SetOptions,
+        options: SetOptions<T, Stored>,
         background: boolean,
     ): MayBePromise<CacheableValue<T>> {
         // Регистрируем работу до обращения к пользовательскому коду, включая синхронный store.
@@ -221,16 +248,16 @@ export class FlashCache<T = unknown> {
         };
 
         // Ошибки L2 уже превращены в промах внутри readSecondary.
-        const read = this.readSecondary(key, storedKey);
+        const read = this.readSecondary(key, storedKey, options.codec);
         return read instanceof Promise ? read.then(acceptSecondary) : acceptSecondary(read);
     }
 
     /** Factory и публикация результата; отсоединённая загрузка остаётся доступна своим читателям. */
-    private refresh(
+    private refresh<Stored>(
         key: string,
         storedKey: string,
         factory: () => MayBePromise<CacheableValue<T>>,
-        options: SetOptions,
+        options: SetOptions<T, Stored>,
         publication: Publication,
     ): MayBePromise<CacheableValue<T>> {
         const ttl = options.customTtl ?? this.ttl;
@@ -243,18 +270,19 @@ export class FlashCache<T = unknown> {
         const persist = (value: CacheableValue<T>): MayBePromise<CacheableValue<T>> => {
             if (value === undefined) throw new Error('undefined values cannot be cached');
             if (!publication.active) return value;
-            const written = this.publish(key, storedKey, value, ttl, staleRatio, publication);
+            const written = this.publish(key, storedKey, value, ttl, staleRatio, options.codec, publication);
             return written instanceof Promise ? written.then(() => value) : value;
         };
         return loaded instanceof Promise ? loaded.then(persist) : persist(loaded);
     }
 
-    private publish(
+    private publish<Stored>(
         key: string,
         storedKey: string,
         value: CacheableValue<T>,
         ttl: number,
         staleRatio: number,
+        codec: Codec<T, Stored> | undefined,
         publication?: Publication,
     ): MayBePromise<void> {
         const time = Date.now();
@@ -262,7 +290,11 @@ export class FlashCache<T = unknown> {
         this.primary.set(storedKey, entry);
         if (publication && !publication.active) return;
         try {
-            const written = this.secondary.set(storedKey, entry);
+            const stored = codec ? { ...entry, value: codec.serialize(value) } : entry;
+            if (stored.value === undefined) throw new Error('codec.serialize cannot return undefined');
+            // serialize — пользовательский код: он мог вызвать set/delete и отсоединить загрузку.
+            if (publication && !publication.active) return;
+            const written = this.secondary.set(storedKey, stored);
             if (written instanceof Promise) {
                 return written
                     .catch((error) => {
@@ -275,16 +307,28 @@ export class FlashCache<T = unknown> {
         }
     }
 
-    private readSecondary(key: string, storedKey: string): MayBePromise<StoreValue<T> | undefined> {
+    private readSecondary<Stored>(
+        key: string,
+        storedKey: string,
+        codec: Codec<T, Stored> | undefined,
+    ): MayBePromise<StoreValue<T> | undefined> {
+        const decode = (entry: StoreValue<unknown> | undefined): StoreValue<T> | undefined => {
+            if (!entry || entry.value === undefined || entry.expAt <= Date.now()) return undefined;
+            if (!codec) return entry as StoreValue<T>;
+            const value = codec.deserialize(entry.value as CacheableValue<Stored>);
+            if (value === undefined) throw new Error('codec.deserialize cannot return undefined');
+            return { ...entry, value };
+        };
         try {
             const read = this.secondary.get(storedKey);
             if (read instanceof Promise) {
-                return read.catch((error) => {
+                const decoded = codec ? read.then(decode) : (read as Promise<StoreValue<T> | undefined>);
+                return decoded.catch((error) => {
                     this.report(error, key, 'l2.get');
                     return undefined;
                 });
             }
-            return read;
+            return decode(read);
         } catch (error) {
             this.report(error, key, 'l2.get');
             return undefined;

@@ -49,14 +49,14 @@ Synchronous-path errors can be thrown directly by the call; asynchronous-path er
 ## Behavior
 
 - `ttl` is a positive integer in milliseconds. `staleRatio` is between 0 and 1: at `0.8`, entries become eligible for background refresh after 80% of their lifetime. Expired entries are never served. L2 promotion preserves timestamps. After an L2 response, an active operation rechecks L1: a fresh entry takes precedence without another publication or factory call. Stale and expired L1 entries do not take precedence.
-- One singleflight per key and cache instance covers L2 lookup, factory execution and writes. The first caller supplies the factory, TTL and stale ratio; each reader chooses its own cloning policy. Callers sharing a key must agree on the data contract.
+- One singleflight per key and cache instance covers L2 lookup, factory execution and writes. The first caller supplies the factory, TTL, stale ratio and codec; each reader chooses its own cloning policy. Callers sharing a key must agree on the data contract.
 - `set/delete` detach existing loads. Existing readers still receive their results, but detached work cannot start publishing into either cache level. Already dispatched L2 writes cannot be cancelled. Coordination is local to the instance.
 - `get` returns fresh or usable stale data from L1 synchronously, otherwise reads L2. It never starts background refresh. A miss, expired entry or L2 read failure returns `undefined`.
 - `null` is a valid cached value; `undefined` is reserved for misses.
 
 ## Per-call stale ratio and jitter
 
-Pass `customStaleRatio` between `0` and `1` to `getOrSet` or `set` to override the instance setting independently of `customTtl`. It affects newly published entries, not existing timestamps. The first singleflight caller supplies the factory, TTL and stale ratio. Pass the override again for subsequent refreshes.
+Pass `customStaleRatio` between `0` and `1` to `getOrSet` or `set` to override the instance setting independently of `customTtl`. It affects newly published entries, not existing timestamps. The first singleflight caller supplies the factory, TTL, stale ratio and codec. Pass the override again for subsequent refreshes.
 
 ```ts
 import { jitter } from '@bidster/flash-cache';
@@ -74,30 +74,38 @@ function getUserCount() {
 
 The TTL remains 24 hours while entries become stale roughly 4–5 minutes after publication. Apply jitter to the fresh interval in milliseconds, then divide by TTL. The existing `jitter` helper only reduces the interval; its integer rounding makes it unsuitable for applying directly to a small fractional ratio. Refresh starts on access after `staleAt`, not on a timer.
 
-## Stores and cloning
+## Per-call codecs and cloning
 
-Both stores expose the same value type to the cache. Use `MapStore<T>` for memory, `IORedisStore` for JSON-compatible Redis values, and `SerializedStore<Value, StoredValue>` for custom representations:
+`FlashCache<T>` specifies the L1 value type. Pass a `codec` to `getOrSet`, `get` and `set` for values that need a different representation in L2. The intermediate type is inferred from the call's codec; no second instance generic or central registry is required.
 
 ```ts
-import { SerializedStore } from '@bidster/flash-cache';
+import Redis from 'ioredis';
+import { IORedisStore } from '@bidster/flash-cache';
 
-const secondary = new SerializedStore(new MapStore<string>(), {
-  serialize: (date: Date) => date.toISOString(),
-  deserialize: (value) => new Date(value),
-});
-const dates = new FlashCache(new MapStore<Date>(), secondary, {
+const tagsCache = new FlashCache<Set<string>>(new MapStore<Set<string>>(), new IORedisStore(new Redis()), {
   ttl: 60_000,
   staleRatio: 0.8,
 });
-const date = await dates.getOrSet('today', () => new Date(), {
-  cloneValue: (value) => new Date(value.getTime()),
-});
-const copy = await dates.get('today', { cloneValue: (value) => new Date(value.getTime()) });
+const codec = {
+  serialize: (value: Set<string>) => [...value],
+  deserialize: (value: string[]) => new Set(value),
+};
+const tags = await tagsCache.getOrSet('tags', () => new Set(['typescript']), { codec });
+const copy = await tagsCache.get('tags', { codec, cloneValue: (value) => new Set(value) });
+await tagsCache.set('tags', new Set(['updated']), { codec });
 ```
 
-Serialization belongs to the store, not individual calls. A store only implements `get/set/delete`; no special error types are required. `SerializedStore` is an optional adapter and passes original conversion errors through without wrapping them. FlashCache applies the L2 operation error policy regardless of whether the error came from serialization or storage access.
+L1 holds a `Set`; the L2 entry holds an array. `IORedisStore` performs JSON serialization of the entry itself, so codecs do not need `JSON.stringify/parse`. Without conversion, a Set would serialize to `{}`.
+
+Both codec functions are synchronous and must not mutate their input. Fresh L1 never invokes them. The first singleflight caller supplies the codec for both reading and writing; joined readers receive the restored value. All calls sharing a key, including `get/set`, must use compatible codecs. They are not registered or compared by reference.
+
+Without a codec, values pass through unchanged: callers must ensure compatibility with L2. Omitting a codec for an encoded key can appear to work on L1 but return the wrong value type from L2. `SerializedStore` has been removed; connect L2 directly. Conversion errors follow the same policy as L2 access errors.
 
 Values are shared by reference by default. An optional `cloneValue` in the options of `getOrSet` or `get` creates a separate value for that call, including readers sharing a load. Omitting it returns the shared reference, regardless of other readers’ options. Instance-level `cloneValue` is no longer supported. It must synchronously preserve the value's type and behavior. A cloning error affects only that reader. Input values are not cloned. Use `structuredClone` explicitly only for compatible data.
+
+## Wrapping Redis commands
+
+Subclasses can override the protected `read(key)`, `write(key, raw, expAt)` and `remove(key)` methods and wrap calls to `super` with a circuit breaker or another execution policy. Public `get/set/delete` retain JSON conversion and absolute expiry through `PXAT`. Serialization runs before `write`; parsing runs after `read` resolves, keeping JSON errors outside the command wrapper. [Subclass example](docs/flash-cache.md#обёртки-redis-команд).
 
 ## Errors
 
