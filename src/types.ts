@@ -1,8 +1,12 @@
 export interface StoreValue<T> {
     value: T;
     time: number; // когда положили
-    staleAt: number; // когда устареет
     expAt: number; // когда истечет
+}
+
+/** L1-only deadline, never persisted to L2. */
+export interface LocalStoreValue<T> extends StoreValue<T> {
+    staleAt: number;
 }
 
 export type MayBePromise<T> = T | Promise<T>;

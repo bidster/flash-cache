@@ -3,7 +3,7 @@ import { FlashCache, MapStore, IORedisStore, type MayBePromise } from '../dist/e
 const cache = new FlashCache<string | null | undefined>(
     new MapStore<string | null | undefined>(),
     new MapStore<string | null | undefined>(),
-    { ttl: 1000, staleRatio: 0.5 },
+    { ttl: 1000, staleAfter: 500 },
 );
 const result: MayBePromise<string | null> = cache.getOrSet('x', () => 'value', { cloneValue: (value) => value });
 const read: MayBePromise<string | null | undefined> = cache.get('x', { cloneValue: (value) => value });
@@ -33,16 +33,16 @@ cache.get('x', { cloneValue: () => undefined });
 // @ts-expect-error set does not clone input values
 cache.set('x', 'value', { cloneValue: String });
 // @ts-expect-error useClones is removed
-new FlashCache(new MapStore<string>(), new MapStore<string>(), { ttl: 1000, staleRatio: 0.5, useClones: true });
+new FlashCache(new MapStore<string>(), new MapStore<string>(), { ttl: 1000, staleAfter: 500, useClones: true });
 new FlashCache<string>(new MapStore<string>(), new MapStore<string>(), {
     ttl: 1000,
-    staleRatio: 0.5,
+    staleAfter: 500,
     // @ts-expect-error instance-level cloneValue is removed
     cloneValue: String,
 });
 const tags = new FlashCache<Set<string>>(new MapStore<Set<string>>(), new MapStore<string[]>(), {
     ttl: 1000,
-    staleRatio: 0.5,
+    staleAfter: 500,
 });
 const tagResult: MayBePromise<Set<string>> = tags.getOrSet('tags', () => new Set<string>(), {
     codec: {
@@ -75,9 +75,9 @@ tags.getOrSet('tags', () => new Set(), {
 // @ts-expect-error a codec contains both conversions
 tags.get('tags', { codec: { serialize: (value) => Array.from(value) } });
 // @ts-expect-error L1 determines the cache value type
-new FlashCache<Set<string>>(new MapStore<string>(), new MapStore<string[]>(), { ttl: 1000, staleRatio: 0.5 });
+new FlashCache<Set<string>>(new MapStore<string>(), new MapStore<string[]>(), { ttl: 1000, staleAfter: 500 });
 declare const redis: IORedisStore;
-const redisTags = new FlashCache<Set<string>>(new MapStore<Set<string>>(), redis, { ttl: 1000, staleRatio: 0.5 });
+const redisTags = new FlashCache<Set<string>>(new MapStore<Set<string>>(), redis, { ttl: 1000, staleAfter: 500 });
 redisTags.getOrSet('tags', () => new Set(), { codec });
 // @ts-expect-error the old store adapter is removed
 import { SerializedStore } from '../dist/esm/index';
@@ -94,12 +94,12 @@ cache.memoize('x', () => 'value');
 // @ts-expect-error store errors require no special exported class
 import { StoreTransformError } from '../dist/esm/index';
 
-cache.getOrSet('ratio', () => 'value', { customStaleRatio: 0.2 });
-cache.set('ratio', 'value', { customStaleRatio: 0.2 });
-// @ts-expect-error stale ratio must be a number
-cache.getOrSet('ratio', () => 'value', { customStaleRatio: '0.2' });
-// @ts-expect-error direct get does not set lifetime options
-cache.get('ratio', { customStaleRatio: 0.2 });
+cache.getOrSet('local', () => 'value', { staleAfter: 200 });
+cache.set('local', 'value', { staleAfter: 200 });
+// @ts-expect-error staleAfter must be milliseconds or a synchronous function
+cache.getOrSet('local', () => 'value', { staleAfter: '200' });
+// @ts-expect-error direct get does not set hard expiry
+cache.get('local', { ttl: 1000 });
 
 // Protected Redis hooks remain available to subclasses through the published declarations.
 class WrappedIORedisStore extends IORedisStore {
@@ -132,7 +132,7 @@ tags.set('tags', new Set(), { codec: asyncCodec });
 tags.get('tags', { codec: asyncCodec });
 // @ts-expect-error the same restriction applies to getOrSet
 tags.getOrSet('tags', () => new Set(), { codec: asyncCodec });
-const unknownCache = new FlashCache(new MapStore<unknown>(), new MapStore<unknown>(), { ttl: 1000, staleRatio: 0.5 });
+const unknownCache = new FlashCache(new MapStore<unknown>(), new MapStore<unknown>(), { ttl: 1000, staleAfter: 500 });
 unknownCache.get('x', {
     codec: {
         serialize: () => null,
@@ -170,4 +170,40 @@ unknownCache.get('x', {
         serialize: () => undefined,
         deserialize: () => null,
     },
+});
+
+// Local refresh policy accepts milliseconds or a synchronous sampler.
+cache.get('x', { staleAfter: () => 600 });
+cache.getOrSet('x', () => 'value', { staleAfter: () => 600 });
+cache.set('x', 'value', { staleAfter: 600 });
+// @ts-expect-error async local refresh policies are not supported
+cache.getOrSet('x', () => 'value', { staleAfter: async () => 600 });
+// @ts-expect-error staleRatio was removed
+new FlashCache(new MapStore<string>(), new MapStore<string>(), { ttl: 1000, staleRatio: 0.5 });
+// @ts-expect-error customStaleRatio was removed
+cache.set('x', 'value', { customStaleRatio: 0.5 });
+
+// @ts-expect-error customTtl was replaced by ttl without an alias
+cache.set('local', 'value', { customTtl: 1000 });
+
+const computedLifetimeCache = new FlashCache(new MapStore<string>(), new MapStore<string>(), {
+    ttl: () => 600_000,
+    staleAfter: (ttl) => {
+        const snapshotTtl: number = ttl;
+        return snapshotTtl * 0.2;
+    },
+});
+computedLifetimeCache.getOrSet('x', () => 'value', { ttl: () => 1000, staleAfter: (ttl) => ttl / 2 });
+computedLifetimeCache.set('x', 'value', { ttl: () => 2000, staleAfter: (ttl) => ttl / 4 });
+computedLifetimeCache.get('x', { staleAfter: (ttl) => ttl / 2 });
+// @ts-expect-error TTL sampler must return milliseconds synchronously
+computedLifetimeCache.set('x', 'value', { ttl: async () => 1000 });
+// @ts-expect-error TTL sampler cannot return a string
+computedLifetimeCache.getOrSet('x', () => 'value', { ttl: () => '1000' });
+// @ts-expect-error snapshot TTL is a number
+computedLifetimeCache.get('x', { staleAfter: (ttl: string) => ttl.length });
+new FlashCache(new MapStore<string>(), new MapStore<string>(), {
+    // @ts-expect-error instance TTL sampler must be synchronous
+    ttl: async () => 1000,
+    staleAfter: 500,
 });

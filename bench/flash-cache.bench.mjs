@@ -46,7 +46,7 @@ async function prepare(scenario) {
               },
           }
         : l2;
-    const options = { ttl, staleRatio: 0.8, namespace: false };
+    const options = { ttl, staleAfter: ttl * 0.8, namespace: false };
     const cache = new FlashCache(l1, secondary, options);
     const readOptions = scenario.clone ? { cloneValue: structuredClone } : {};
     const read = (key, load) => cache.getOrSet(key, load, readOptions);

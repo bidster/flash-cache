@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { FlashCache, MapStore } from './index';
+import { FlashCache, MapStore, type LocalStoreValue } from './index';
 
 describe('reader cloning', () => {
     it.each(['fresh-l1', 'stale-l1', 'fresh-l2', 'stale-l2', 'miss'])(
@@ -11,14 +11,14 @@ describe('reader cloning', () => {
             const cloneValue = vi.fn((value: typeof original) => structuredClone(value));
             const cache = new FlashCache(primary, secondary, {
                 ttl: 60_000,
-                staleRatio: 0.5,
+                staleAfter: 30_000,
                 namespace: false,
             });
             if (state !== 'miss') {
                 const time = Date.now();
                 const entry = {
                     value: original,
-                    time,
+                    time: state.startsWith('stale') ? time - 30_001 : time,
                     staleAt: state.startsWith('stale') ? 0 : time + 30_000,
                     expAt: time + 60_000,
                 };
@@ -39,7 +39,7 @@ describe('reader cloning', () => {
         const primary = new MapStore<{ value: number }>();
         const cache = new FlashCache(primary, new MapStore<{ value: number }>(), {
             ttl: 1000,
-            staleRatio: 1,
+            staleAfter: 1000,
             namespace: false,
         });
         expect(cache.get('missing', { cloneValue })).toBeUndefined();
@@ -58,7 +58,7 @@ describe('reader cloning', () => {
             const original = { value: 1 };
             const primary = new MapStore<typeof original>();
             const secondary = new MapStore<typeof original>();
-            const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleRatio: 0.5 });
+            const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleAfter: 30_000 });
             let resolve!: (value: typeof original) => void;
             const pending = new Promise<typeof original>((done) => {
                 resolve = done;
@@ -88,7 +88,7 @@ describe('reader cloning', () => {
     it('clones stale async L2 separately for joined readers before refresh completes', async () => {
         const original = { value: 1 };
         const time = Date.now();
-        const stale = { value: original, time, staleAt: 0, expAt: time + 60_000 };
+        const stale = { value: original, time: time - 30_001, staleAt: 0, expAt: time + 60_000 };
         let resolve!: (value: typeof original) => void;
         const pending = new Promise<typeof original>((done) => {
             resolve = done;
@@ -101,7 +101,7 @@ describe('reader cloning', () => {
                 set: vi.fn(),
                 delete: vi.fn(),
             },
-            { ttl: 60_000, staleRatio: 0.5 },
+            { ttl: 60_000, staleAfter: 30_000 },
         );
         const cloneValue = vi.fn((value: typeof original) => ({ ...value }));
         const first = cache.getOrSet('x', factory);
@@ -133,14 +133,15 @@ describe('reader cloning', () => {
                           delete: (key: string) => raw.delete(key),
                       }
                     : raw;
-            const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleRatio: 0.5, namespace: false });
+            const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleAfter: 30_000, namespace: false });
             const time = Date.now();
-            (state.endsWith('l1') ? primary : raw).set('x', {
+            const localEntry: LocalStoreValue<typeof original> = {
                 value: original,
-                time,
+                time: state.startsWith('stale') ? time - 30_001 : time,
                 staleAt: state.startsWith('stale') ? 0 : time + 30_000,
                 expAt: time + 60_000,
-            });
+            };
+            (state.endsWith('l1') ? primary : raw).set('x', localEntry);
             const cloneValue = vi.fn((value: typeof original) => ({ ...value }));
             const response = cache.get('x', { cloneValue });
             if (state === 'async-l2') expect(response).toBeInstanceOf(Promise);
@@ -164,7 +165,7 @@ describe('reader cloning', () => {
                 set: vi.fn(),
                 delete: vi.fn(),
             },
-            { ttl: 60_000, staleRatio: 0.5, onError },
+            { ttl: 60_000, staleAfter: 30_000, onError },
         );
         const failure = new Error('clone');
         const read = () =>
@@ -187,7 +188,7 @@ describe('reader cloning', () => {
             }
         }
         const original = new User();
-        const cache = new FlashCache(new MapStore<User>(), new MapStore<User>(), { ttl: 1000, staleRatio: 1 });
+        const cache = new FlashCache(new MapStore<User>(), new MapStore<User>(), { ttl: 1000, staleAfter: 1000 });
         expect(cache.getOrSet('x', () => original)).toBe(original);
         expect((cache.get('x') as User).greeting()).toBe('Igor');
     });

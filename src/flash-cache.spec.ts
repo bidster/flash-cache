@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { FlashCache, MapStore } from './index';
-import type { MayBeAsyncStore, StoreValue } from './index';
+import type { MayBeAsyncStore, StoreValue, LocalStoreValue } from './index';
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -14,16 +14,16 @@ function deferred<T>() {
 
 function setup<T>(secondary: MayBeAsyncStore<T> = new MapStore<T>(), extra = {}) {
     const primary = new MapStore<T>();
-    const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleRatio: 0.5, namespace: false, ...extra });
+    const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleAfter: 30_000, namespace: false, ...extra });
     return { cache, primary, secondary };
 }
 
-function entry<T>(value: T, state: 'fresh' | 'stale' | 'expired' = 'fresh'): StoreValue<T> {
-    const time = Date.now();
+function entry<T>(value: T, state: 'fresh' | 'stale' | 'expired' = 'fresh'): LocalStoreValue<T> {
+    const time = Date.now() - (state === 'fresh' ? 0 : 30_001);
     return {
         value,
         time,
-        staleAt: state === 'fresh' ? time + 30_000 : time - 1,
+        staleAt: time + 30_000,
         expAt: state === 'expired' ? time - 1 : time + 60_000,
     };
 }
@@ -94,7 +94,7 @@ describe('FlashCache', () => {
         const secondary = { get: vi.fn(async () => stale), set: vi.fn(), delete: vi.fn() };
         const { cache, primary } = setup(secondary);
         expect(await cache.getOrSet('x', () => load.promise)).toBe(1);
-        expect(primary.get('x')).toBe(stale);
+        expect(primary.get('x')).toEqual(stale);
         load.resolve(2);
         await load.promise;
         expect(cache.get('x')).toBe(2);
@@ -125,6 +125,7 @@ describe('FlashCache', () => {
         const factory = vi.fn(() => load.promise);
         expect(cache.getOrSet('x', factory)).toBe(1);
         stale.expAt = 0;
+        primary.get('x')!.expAt = 0;
         const waiting = cache.getOrSet('x', factory);
         expect(waiting).toBeInstanceOf(Promise);
         load.resolve(2);
@@ -339,7 +340,7 @@ describe('FlashCache', () => {
         const original = { nested: { value: 1 } };
         const shared = setup<typeof original>().cache;
         expect(shared.getOrSet('x', () => original)).toBe(original);
-        const cloneValue = vi.fn(structuredClone);
+        const cloneValue = vi.fn((value: typeof original) => structuredClone(value));
         const { cache, primary } = setup<typeof original>();
         const load = deferred<typeof original>();
         const first = cache.getOrSet('x', () => load.promise, { cloneValue });
@@ -386,7 +387,7 @@ describe('FlashCache', () => {
             deserialize: (name: string) => new User(name),
         };
         const primary = new MapStore<User>();
-        const cache = new FlashCache(primary, raw, { ttl: 60_000, staleRatio: 0.5, namespace: false });
+        const cache = new FlashCache(primary, raw, { ttl: 60_000, staleAfter: 30_000, namespace: false });
         const cloneValue = (user: User) => new User(user.name);
         const original = new User('Igor');
         expect((cache.getOrSet('x', () => original, { codec, cloneValue }) as User).greeting()).toBe('Hello Igor');
@@ -423,7 +424,12 @@ describe('FlashCache', () => {
         };
         const onError = vi.fn();
         const primary = new MapStore<number>();
-        const cache = new FlashCache(primary, underlying, { ttl: 60_000, staleRatio: 0.5, namespace: false, onError });
+        const cache = new FlashCache(primary, underlying, {
+            ttl: 60_000,
+            staleAfter: 30_000,
+            namespace: false,
+            onError,
+        });
         const factory = vi.fn(() => 2);
         expect(await cache.getOrSet('x', factory, { codec })).toBe(2);
         expect(factory).toHaveBeenCalledTimes(1);
@@ -563,13 +569,17 @@ describe('FlashCache', () => {
         const read = deferred<StoreValue<number> | undefined>();
         const load = deferred<number>();
         const onError = vi.fn();
-        const { cache } = setup<number>({ get: () => read.promise, set: vi.fn(), delete: vi.fn() }, { onError });
+        const { cache, primary } = setup<number>(
+            { get: () => read.promise, set: vi.fn(), delete: vi.fn() },
+            { onError },
+        );
         const factory = vi.fn(() => load.promise);
         const first = cache.getOrSet('x', factory);
         const second = cache.getOrSet('x', factory);
         read.resolve(stale);
         expect(await Promise.all([first, second])).toEqual([1, 1]);
         stale.expAt = 0;
+        primary.get('x')!.expAt = 0;
         const waiting = cache.getOrSet('x', factory);
         const failure = new Error('refresh');
         const rejected = expect(waiting).rejects.toBe(failure);
@@ -606,11 +616,13 @@ describe('FlashCache', () => {
         const written = deferred<void>();
         const secondary = { get: vi.fn(() => stale), set: vi.fn(() => written.promise), delete: vi.fn() };
         const { cache, primary } = setup<number>(secondary);
+        const localWrites = vi.spyOn(primary, 'set');
         const factory = vi.fn(() => 2);
         expect(cache.getOrSet('x', factory)).toBe(1);
         expect(cache.get('x')).toBe(2);
         // После истечения обеих доступных записей читатель должен ждать ту же запись L2.
         stale.expAt = 0;
+        localWrites.mock.calls[0][1].expAt = 0;
         primary.get('x')!.expAt = 0;
         const waiting = cache.getOrSet('x', factory);
         let completed = false;
@@ -627,9 +639,9 @@ describe('FlashCache', () => {
 
     it('validates options, rejects undefined and permits null', () => {
         expect(() => setup(undefined, { ttl: 0 })).toThrow('ttl');
-        expect(() => setup(undefined, { staleRatio: 2 })).toThrow('staleRatio');
+        expect(() => setup(undefined, { staleAfter: -1 })).toThrow('staleAfter');
         const { cache } = setup<number | null>();
-        expect(() => cache.getOrSet('x', () => 1, { customTtl: 0 })).toThrow('customTtl');
+        expect(() => cache.getOrSet('x', () => 1, { ttl: 0 })).toThrow('ttl');
         expect(() => cache.getOrSet('x', () => undefined as never)).toThrow('undefined');
         expect(cache.getOrSet('x', () => null)).toBeNull();
     });

@@ -11,14 +11,14 @@ import { FlashCache, MapStore } from '@bidster/flash-cache';
 
 const cache = new FlashCache<number>(new MapStore<number>(), new MapStore<number>(), {
   ttl: 60_000,
-  staleRatio: 0.8,
+  staleAfter: 48_000,
   namespace: 'counts',
   onError: (error, context) => console.error(context, error),
 });
 
 const count = cache.getOrSet('users', () => 42); // Even the first miss is synchronous with MapStore.
 const hit = cache.getOrSet('users', async () => 100); // Returns 42 synchronously.
-await cache.set('users', 50, { customTtl: 30_000 });
+await cache.set('users', 50, { ttl: 30_000 });
 const stored = await cache.get('users'); // Value or undefined; does not invoke a factory.
 await cache.delete('users');
 ```
@@ -48,31 +48,65 @@ Synchronous-path errors can be thrown directly by the call; asynchronous-path er
 
 ## Behavior
 
-- `ttl` is a positive integer in milliseconds. `staleRatio` is between 0 and 1: at `0.8`, entries become eligible for background refresh after 80% of their lifetime. Expired entries are never served. L2 promotion preserves timestamps. After an L2 response, an active operation rechecks L1: a fresh entry takes precedence without another publication or factory call. Stale and expired L1 entries do not take precedence.
-- One singleflight per key and cache instance covers L2 lookup, factory execution and writes. The first caller supplies the factory, TTL, stale ratio and codec; each reader chooses its own cloning policy. Callers sharing a key must agree on the data contract.
+- `ttl` is a positive integer in milliseconds or a synchronous function returning one. Each L1 has its own refresh deadline; L2 retains a shared creation time and hard expiry. Expired entries are never served. After an L2 response, an active operation rechecks fresh L1 before publishing or invoking a factory.
+- One singleflight per key and cache instance covers L2 lookup, factory execution and writes. The first caller supplies the factory, TTL, staleAfter and codec; each reader chooses its own cloning policy. Callers sharing a key must agree on the data contract.
 - `set/delete` detach existing loads. Existing readers still receive their results, but detached work cannot start publishing into either cache level. Already dispatched L2 writes cannot be cancelled. Coordination is local to the instance.
 - `get` returns fresh or usable stale data from L1 synchronously, otherwise reads L2. It never starts background refresh. A miss, expired entry or L2 read failure returns `undefined`.
 - `null` is a valid cached value; `undefined` is reserved for misses.
 
-## Per-call stale ratio and jitter
+## Local refresh deadlines and shared expiry
 
-Pass `customStaleRatio` between `0` and `1` to `getOrSet` or `set` to override the instance setting independently of `customTtl`. It affects newly published entries, not existing timestamps. The first singleflight caller supplies the factory, TTL, stale ratio and codec. Pass the override again for subsequent refreshes.
+L2 stores only `{ value, time, expAt }`. L1 adds a local `staleAt` deadline.
+`staleAfter` is a non-negative integer in milliseconds or a synchronous function
+`(ttl: number) => number` returning one. Each cache instance samples it once when accepting a new snapshot,
+including L2 promotion. A snapshot is identified by its `time/expAt` pair. Re-reading
+the same snapshot does not resample; evicting L1 allows a new local deadline.
 
 ```ts
-import { jitter } from '@bidster/flash-cache';
+import { FlashCache, MapStore, jitter } from '@bidster/flash-cache';
 
-const ttlMs = 24 * 60 * 60 * 1000;
-const freshForMs = 5 * 60 * 1000;
-
-function getUserCount() {
-  return cache.getOrSet('users', () => loadUserCount(), {
-    customTtl: ttlMs,
-    customStaleRatio: jitter(freshForMs, 0.2) / ttlMs,
-  });
-}
+const cache = new FlashCache(l1, l2, {
+  ttl: 600_000,
+  staleAfter: () => jitter(120_000, 0.5),
+});
 ```
 
-The TTL remains 24 hours while entries become stale roughly 4–5 minutes after publication. Apply jitter to the fresh interval in milliseconds, then divide by TTL. The existing `jitter` helper only reduces the interval; its integer rounding makes it unsuitable for applying directly to a small fractional ratio. Refresh starts on access after `staleAt`, not on a timer.
+This chooses a local check 60–120 seconds after snapshot creation while preserving
+a shared 600-second hard expiry. Deadlines are anchored to the original creation
+time, never to the time L2 is read. `staleAt` is capped at `expAt` and is never
+persisted in L2.
+
+`ttl` may be a number or a synchronous `() => number`. Its sampler runs once when
+publishing a new snapshot, after a successful factory or during explicit `set`.
+Construction, cache hits, L2 reads, failed factories and detached factory results do
+not evaluate it. The first singleflight caller supplies the TTL sampler.
+
+The argument to `staleAfter(ttl)` is the snapshot's actual `expAt - time`, not its
+remaining lifetime or the current instance default. L2 promotion evaluates only the
+local stale policy and retains the original creation time and hard expiry.
+
+```ts
+const relativeCache = new FlashCache(l1, l2, {
+  ttl: () => jitter(600_000),
+  staleAfter: (ttl) => jitter(Math.floor(ttl * 0.2), 0.5),
+});
+```
+
+Both functions are synchronous. TTL results must be positive integers; stale interval
+results must be non-negative integers. Sampling or validation errors during publication
+do not publish a new snapshot or extend the original deadlines.
+
+After the local deadline, the next request serves usable stale L1 and checks L2
+before invoking the factory. A newer snapshot receives a new local deadline;
+if locally fresh, it avoids the factory. Re-reading the same stale snapshot cannot
+postpone refresh. Only a successful factory or explicit set starts a new hard expiry.
+
+There are no locks, distributed singleflight or background timers. Checks overlapping
+an unfinished refresh may still invoke more than one factory. Local singleflight
+covers the entire L2 → factory → write cycle.
+
+Override `staleAfter` per call on `getOrSet`, `get` or `set`. `ttl` affects
+new publications only. Existing L1 deadlines are unchanged. `get` never invokes a factory.
 
 ## Per-call codecs and cloning
 
@@ -84,7 +118,7 @@ import { IORedisStore } from '@bidster/flash-cache';
 
 const tagsCache = new FlashCache<Set<string>>(new MapStore<Set<string>>(), new IORedisStore(new Redis()), {
   ttl: 60_000,
-  staleRatio: 0.8,
+  staleAfter: 48_000,
 });
 const codec = {
   serialize: (value: Set<string>) => [...value],
@@ -115,7 +149,7 @@ Foreground factory, L1 and cloning errors propagate to the caller. `delete` remo
 
 ## API transition
 
-`FlashCache` is the main export. The former `FlashMemo`, `memoize`, `del`, `useClones`, `materialize`, `state/revalidation` result protocol and temporary `/v2` export have been removed without compatibility aliases. The storage prefix remains `flashCache:v2:`; `namespace: false` disables it. Old v1 keys are not read or migrated.
+`FlashCache` is the main export. The former `FlashMemo`, `memoize`, `del`, `useClones`, `materialize`, `state/revalidation` result protocol and temporary `/v2` export have been removed without compatibility aliases. In rc.11, `staleRatio/customStaleRatio` are replaced by `staleAfter`; `StoreValue` contains shared metadata and `LocalStoreValue` adds the local deadline. The storage prefix is `flashCache:v3:`; `namespace: false` disables it. Old v1/v2 keys are not read or migrated; no compatibility layer is provided.
 
 [Русская документация](README.ru.md) · [Detailed contract (Russian)](docs/flash-cache.md) · [Benchmarks](bench/README.md)
 

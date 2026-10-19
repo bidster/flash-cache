@@ -15,8 +15,8 @@ const setCodec: Codec<Set<string>, string[]> = {
 };
 
 function entry(value: string[], stale = false): StoreValue<string[]> {
-    const time = Date.now();
-    return { value, time, staleAt: stale ? 0 : time + 30_000, expAt: time + 60_000 };
+    const time = Date.now() - (stale ? 30_001 : 0);
+    return { value, time, expAt: time + 60_000 };
 }
 
 describe('per-call codec', () => {
@@ -36,14 +36,14 @@ describe('per-call codec', () => {
                       },
                   }
                 : raw;
-            const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleRatio: 0.5, namespace: false });
+            const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleAfter: 30_000, namespace: false });
             const codec = { serialize: vi.fn(setCodec.serialize), deserialize: vi.fn(setCodec.deserialize) };
             const original = new Set(['a', 'b']);
             const loaded = cache.getOrSet('x', () => original, { codec });
             expect(loaded instanceof Promise).toBe(asyncStore);
             expect(await loaded).toBe(original);
             const metadata = primary.get('x')!;
-            expect(raw.get('x')).toEqual({ ...metadata, value: ['a', 'b'] });
+            expect(raw.get('x')).toEqual({ time: metadata.time, expAt: metadata.expAt, value: ['a', 'b'] });
             expect(codec.serialize).toHaveBeenCalledExactlyOnceWith(original);
             expect(codec.deserialize).not.toHaveBeenCalled();
             expect(cache.get('x', { codec })).toBe(original);
@@ -72,7 +72,7 @@ describe('per-call codec', () => {
         const raw = new MapStore<unknown>();
         const cache = new FlashCache(new MapStore<Set<string>>(), raw, {
             ttl: 60_000,
-            staleRatio: 0.5,
+            staleAfter: 30_000,
             namespace: false,
         });
         const stringCodec = {
@@ -91,7 +91,7 @@ describe('per-call codec', () => {
         const secondary = { get: vi.fn(() => read.promise), set: vi.fn(), delete: vi.fn() };
         const cache = new FlashCache(new MapStore<Set<string>>(), secondary, {
             ttl: 60_000,
-            staleRatio: 0.5,
+            staleAfter: 30_000,
             namespace: false,
         });
         const firstCodec = { serialize: vi.fn(setCodec.serialize), deserialize: vi.fn(setCodec.deserialize) };
@@ -131,7 +131,7 @@ describe('per-call codec', () => {
         const read = deferred<StoreValue<string[]> | undefined>();
         const loaded = deferred<Set<string>>();
         const secondary = { get: () => (stage === 'read' ? read.promise : undefined), set: vi.fn(), delete: vi.fn() };
-        const cache = new FlashCache(new MapStore<Set<string>>(), secondary, { ttl: 60_000, staleRatio: 0.5 });
+        const cache = new FlashCache(new MapStore<Set<string>>(), secondary, { ttl: 60_000, staleAfter: 30_000 });
         const codec = { serialize: vi.fn(setCodec.serialize), deserialize: vi.fn(setCodec.deserialize) };
         const old = cache.getOrSet('x', () => loaded.promise, { codec });
         const replacement = new Set(['replacement']);
@@ -152,7 +152,7 @@ describe('per-call codec', () => {
     ] as const)('prevents an L2 write when %s serialize reenters through %s', (method, mutation) => {
         const primary = new MapStore<Set<string>>();
         const secondary = { get: () => undefined, set: vi.fn(), delete: vi.fn() };
-        const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleRatio: 0.5, namespace: false });
+        const cache = new FlashCache(primary, secondary, { ttl: 60_000, staleAfter: 30_000, namespace: false });
         const replacement = new Set(['new']);
         const original = new Set(['old']);
         const options = {
@@ -179,7 +179,7 @@ describe('per-call codec', () => {
         raw.set('x', { ...entry(['old']), expAt: 0 });
         const cache = new FlashCache(new MapStore<Set<string>>(), raw, {
             ttl: 60_000,
-            staleRatio: 0.5,
+            staleAfter: 30_000,
             namespace: false,
         });
         const codec = { serialize: vi.fn(setCodec.serialize), deserialize: vi.fn(setCodec.deserialize) };

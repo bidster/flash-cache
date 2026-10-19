@@ -40,7 +40,6 @@ describe('IORedisStore', () => {
         await store.set('user:42', {
             value: { name: 'Igor' },
             time: 1,
-            staleAt: 2,
             expAt: 3,
         });
 
@@ -49,7 +48,6 @@ describe('IORedisStore', () => {
         expect(entry).toEqual({
             value: { name: 'Igor' },
             time: 1,
-            staleAt: 2,
             expAt: 3,
         });
     });
@@ -62,7 +60,7 @@ describe('IORedisStore', () => {
         } as unknown as Redis;
         const cache = new FlashCache<JsonValue>(new MapStore(), new IORedisStore(client), {
             ttl: 1000,
-            staleRatio: 1,
+            staleAfter: 1000,
             namespace: false,
             onError,
         });
@@ -78,7 +76,7 @@ describe('IORedisStore', () => {
         const primary = new MapStore<JsonValue>();
         const cache = new FlashCache<JsonValue>(primary, new IORedisStore(client), {
             ttl: 1000,
-            staleRatio: 1,
+            staleAfter: 1000,
             namespace: false,
             onError,
         });
@@ -91,13 +89,15 @@ describe('IORedisStore', () => {
     });
 
     it('lets subclasses wrap Redis commands while inheriting JSON conversion and absolute expiry', async () => {
-        const entry = { value: { id: 42 }, time: 1, staleAt: 2, expAt: 3 };
+        const entry = { value: { id: 42 }, time: 1, expAt: 3 };
         const client = {
             get: vi.fn().mockResolvedValueOnce(JSON.stringify(entry)).mockResolvedValueOnce(null),
             set: vi.fn().mockResolvedValue('OK'),
             del: vi.fn().mockResolvedValue(1),
         };
-        const execute = vi.fn(<T>(command: () => Promise<T>) => command());
+        const execute = vi.fn(<T>(command: () => Promise<T>) => command()) as <T>(
+            command: () => Promise<T>,
+        ) => Promise<T>;
         const store = new WrappedIORedisStore(client as unknown as Redis, execute);
 
         await expect(store.get('key')).resolves.toEqual(entry);
@@ -117,7 +117,7 @@ describe('IORedisStore', () => {
             const error = new Error('Circuit is open');
             const client = { get: vi.fn(), set: vi.fn(), del: vi.fn() };
             const store = new WrappedIORedisStore(client as unknown as Redis, () => Promise.reject(error));
-            const entry = { value: 42, time: 1, staleAt: 2, expAt: 3 };
+            const entry = { value: 42, time: 1, expAt: 3 };
 
             await expect(operation === 'set' ? store.set('key', entry) : store[operation]('key')).rejects.toBe(error);
             expect(client.get).not.toHaveBeenCalled();
@@ -143,7 +143,7 @@ describe('IORedisStore', () => {
                 throw error;
             }
         });
-        const entry = { value: 42, time: 1, staleAt: 2, expAt: 3 };
+        const entry = { value: 42, time: 1, expAt: 3 };
 
         await expect(operation === 'set' ? store.set('key', entry) : store[operation]('key')).rejects.toBe(error);
         expect(onFailure).toHaveBeenCalledExactlyOnceWith(cause);
@@ -170,14 +170,15 @@ describe('IORedisStore', () => {
     });
 
     it('serializes JSON before entering the wrapped write', async () => {
-        const execute = vi.fn(<T>(command: () => Promise<T>) => command());
+        const execute = vi.fn(<T>(command: () => Promise<T>) => command()) as <T>(
+            command: () => Promise<T>,
+        ) => Promise<T>;
         const client = { set: vi.fn() };
         const store = new WrappedIORedisStore(client as unknown as Redis, execute);
         const error = new TypeError('Cannot serialize');
         const entry = {
             value: 42,
             time: 1,
-            staleAt: 2,
             expAt: 3,
             toJSON() {
                 throw error;

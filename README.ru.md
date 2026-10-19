@@ -11,7 +11,7 @@ import { FlashCache, MapStore } from '@bidster/flash-cache';
 
 const cache = new FlashCache<number>(new MapStore<number>(), new MapStore<number>(), {
   ttl: 60_000,
-  staleRatio: 0.8,
+  staleAfter: 48_000,
   namespace: 'counts',
   onError: (error, context) => console.error(context, error),
 });
@@ -19,7 +19,7 @@ const cache = new FlashCache<number>(new MapStore<number>(), new MapStore<number
 const count = cache.getOrSet('users', () => 42); // Первый промах тоже синхронный с MapStore.
 const hit = cache.getOrSet('users', async () => 100); // 42 синхронно
 
-await cache.set('users', 50, { customTtl: 30_000 });
+await cache.set('users', 50, { ttl: 30_000 });
 const stored = await cache.get('users'); // 50 или undefined при промахе
 await cache.delete('users');
 ```
@@ -47,31 +47,65 @@ if (result instanceof Promise) {
 
 Ошибки синхронного пути могут выбрасываться непосредственно из вызова; ошибки асинхронного пути отклоняют Promise. Для их общей обработки можно использовать `try/catch` вокруг `await`, а для сохранения синхронного пути — `try/catch` вокруг вызова вместе с `.catch()` в Promise-ветке.
 
-## Срок жизни и обновление
+## Локальный срок обновления и общий expire
 
-TTL задаётся положительным целым числом миллисекунд. `staleRatio` определяет начало обновления: `0.8` означает, что после 80% TTL значение отдаётся как stale с обновлением в фоне. После полного истечения TTL оно не выдаётся. Перенос L2 → L1 сохраняет исходные сроки жизни. После ответа L2 активная операция повторно проверяет L1: если там уже есть fresh-значение, использует его без перезаписи и без вызова factory. Stale и expired L1 не имеют такого приоритета.
-
-Один singleflight на ключ и экземпляр объединяет чтение L2, factory и запись. `set/delete` отсоединяют старую загрузку: ожидающие читатели получают её результат, но он больше не публикуется в кеше. Уже отправленную запись L2 отменить нельзя; межпроцессной координации нет.
-
-## Переопределение stale и jitter
-
-В `getOrSet` и `set` можно передать `customStaleRatio` от `0` до `1`, отдельно от `customTtl`. Он влияет только на новую запись; существующие сроки не изменяются. При singleflight factory, TTL и staleRatio определяет первый вызов. Для последующих обновлений передавайте опцию снова.
+L2 хранит только `{ value, time, expAt }`. `expAt = time + ttl` общий для всех pod.
+В каждом L1 дополнительно хранится `staleAt = min(time + staleAfter, expAt)`.
+`staleAfter` — неотрицательное целое число миллисекунд или синхронная функция,
+которая получает фактический TTL снимка и возвращает такое число. Функция вызывается один раз при принятии нового
+снимка в L1, включая загрузку из L2. Повторное чтение того же снимка не пересчитывает
+срок. Снимок определяется парой `time/expAt`; eviction L1 позволяет выбрать срок заново.
 
 ```ts
-import { jitter } from '@bidster/flash-cache';
+import { FlashCache, MapStore, jitter } from '@bidster/flash-cache';
 
-const ttlMs = 24 * 60 * 60 * 1000;
-const freshForMs = 5 * 60 * 1000;
-
-function getUserCount() {
-  return cache.getOrSet('users', () => loadUserCount(), {
-    customTtl: ttlMs,
-    customStaleRatio: jitter(freshForMs, 0.2) / ttlMs,
-  });
-}
+const cache = new FlashCache(l1, l2, {
+  ttl: 600_000,
+  staleAfter: () => jitter(120_000, 0.5),
+});
 ```
 
-TTL остаётся равным 24 часам, stale начинается примерно через 4–5 минут. Jitter применяется к интервалу до stale в миллисекундах, а результат переводится в долю TTL. Обновление запускается следующим обращением после `staleAt`, а не таймером. [Подробности механики](docs/flash-cache.md#jitter-момента-stale).
+В примере каждый экземпляр выбирает свой момент проверки через 60–120 секунд
+от создания снимка; общий expire составляет 600 секунд. Время отсчитывается от `time`,
+а не от чтения L2. Если локальный срок уже прошёл при загрузке L2, снимок считается stale.
+Случайный срок не записывается в L2, исходный `expAt` при чтении не продлевается.
+
+`ttl` — положительное целое число миллисекунд или синхронная функция `() => number`.
+Генератор TTL не вызывается в конструкторе, на попаданиях в кеш или при чтении L2.
+Он вычисляется один раз при публикации нового снимка: после успешной factory либо
+при явном `set`. Результат проходит общую проверку TTL. Участники singleflight
+используют генератор первого вызова; отсоединённая или неудачная factory его не вызывает.
+
+`staleAfter` может быть числом или функцией `(ttl: number) => number`.
+Аргумент — фактический срок хранения снимка `expAt - time`, а не оставшееся время
+до expire и не текущая настройка TTL экземпляра. При принятии L2 вычисляется только
+локальный `staleAfter`; исходные `time/expAt` остаются прежними.
+
+```ts
+const relativeCache = new FlashCache(l1, l2, {
+  ttl: () => jitter(600_000),
+  staleAfter: (ttl) => jitter(Math.floor(ttl * 0.2), 0.5),
+});
+```
+
+Обе функции синхронны. Результат `ttl` должен быть положительным целым числом,
+результат `staleAfter` — неотрицательным целым числом. Ошибка вычисления или проверки
+при публикации не записывает новый снимок и не продлевает сроки прежнего.
+
+После локального `staleAt` следующее обращение возвращает пригодный stale из L1
+и проверяет L2. Более новый снимок получает собственный локальный срок; если он ещё
+fresh по этому сроку, factory не вызывается. Прежний снимок не получает новую отсрочку:
+вызывается factory. Успешная factory публикует новый снимок и новый общий expire.
+Ошибка обновления не продлевает существующие сроки. Expired не выдаётся.
+
+Блокировок, межпроцессного singleflight и фоновых таймеров нет. Несколько pod могут
+вызвать factory одновременно, если их проверки попали в интервал ещё не завершённого
+обновления. Локальный singleflight сохраняется на весь цикл L2 → factory → запись.
+
+В `getOrSet`, `get` и `set` можно передать `staleAfter`, переопределив политику
+экземпляра. В `getOrSet/set` `ttl` задаёт срок нового снимка. Опции не меняют
+уже принятый L1. Первый вызов singleflight определяет factory, TTL, staleAfter и codec;
+каждый читатель отдельно выбирает cloneValue. `get` не запускает factory.
 
 ## Redis и преобразования для конкретного ключа
 
@@ -83,7 +117,7 @@ import { FlashCache, IORedisStore, MapStore } from '@bidster/flash-cache';
 
 const tagsCache = new FlashCache<Set<string>>(new MapStore<Set<string>>(), new IORedisStore(new Redis()), {
   ttl: 60_000,
-  staleRatio: 0.8,
+  staleAfter: 48_000,
 });
 const codec = {
   serialize: (value: Set<string>) => [...value],
@@ -124,7 +158,7 @@ const copy = await tagsCache.get('tags', {
 
 [Подробный контракт](docs/flash-cache.md) · [English](README.md) · [Бенчмарки](bench/README.md)
 
-Основной экспорт — `FlashCache`. Прежние `FlashMemo`, `memoize`, `del`, `useClones`, `materialize`, объект результата `state/revalidation` и временный экспорт `/v2` удалены без обратной совместимости. Префикс хранения — `flashCache:v2:`; `namespace: false` отключает его. Старые ключи v1 не читаются.
+Основной экспорт — `FlashCache`. Прежние `FlashMemo`, `memoize`, `del`, `useClones`, `materialize`, объект результата `state/revalidation` и временный экспорт `/v2` удалены без обратной совместимости. С версии rc.11 `staleRatio/customStaleRatio` заменены на `staleAfter`, `StoreValue` содержит только общие метаданные, а `LocalStoreValue` дополнительно содержит локальный `staleAt`. Префикс хранения — `flashCache:v3:`; `namespace: false` отключает его. Старые ключи v1/v2 не читаются, совместимость не реализована.
 
 ```sh
 yarn lint

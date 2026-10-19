@@ -1,8 +1,23 @@
-import type { CacheableValue, MayBeAsyncStore, MayBePromise, Store, StoreValue } from './types.js';
+import type { CacheableValue, MayBeAsyncStore, MayBePromise, Store, StoreValue, LocalStoreValue } from './types.js';
+
+export type Ttl = number | (() => number);
+export type StaleAfter = number | ((ttl: number) => number);
+
+function validateTtl(value: number): void {
+    if (!Number.isInteger(value) || value <= 0) {
+        throw new Error('ttl must be a positive integer in milliseconds');
+    }
+}
+
+function validateStaleAfter(value: StaleAfter): void {
+    if (typeof value !== 'function' && (!Number.isSafeInteger(value) || value < 0)) {
+        throw new Error('staleAfter must be a non-negative integer in milliseconds or a function returning one');
+    }
+}
 
 export interface FlashCacheOptions {
-    ttl: number;
-    staleRatio: number;
+    ttl: Ttl;
+    staleAfter: StaleAfter;
     namespace?: string | false;
     onError?: (error: unknown, context: { key: string; operation: 'l2.get' | 'l2.set' | 'refresh' }) => void;
 }
@@ -16,8 +31,8 @@ export interface Codec<Value, StoredValue> {
 }
 
 interface LifetimeOptions {
-    customTtl?: number;
-    customStaleRatio?: number;
+    ttl?: Ttl;
+    staleAfter?: StaleAfter;
 }
 
 export interface SetOptions<T = unknown, Stored = unknown> extends LifetimeOptions {
@@ -25,6 +40,7 @@ export interface SetOptions<T = unknown, Stored = unknown> extends LifetimeOptio
 }
 
 export interface GetOptions<T, Stored = unknown> {
+    staleAfter?: StaleAfter;
     codec?: Codec<T, Stored>;
     cloneValue?: (value: CacheableValue<T>) => CacheableValue<T>;
 }
@@ -41,8 +57,8 @@ export class FlashCache<T = unknown> {
     private readonly flights = new Map<string, Flight<T>>();
     private readonly publications = new Map<string, Set<Publication>>();
     private readonly prefix: string;
-    private readonly ttl: number;
-    private readonly staleRatio: number;
+    private readonly ttl: Ttl;
+    private readonly staleAfter: StaleAfter;
     private readonly onError?: FlashCacheOptions['onError'];
 
     constructor(
@@ -50,17 +66,13 @@ export class FlashCache<T = unknown> {
         private readonly secondary: MayBeAsyncStore<unknown>,
         options: FlashCacheOptions,
     ) {
-        if (!Number.isInteger(options.ttl) || options.ttl <= 0) {
-            throw new Error('ttl must be a positive integer in milliseconds');
-        }
-        if (!Number.isFinite(options.staleRatio) || options.staleRatio < 0 || options.staleRatio > 1) {
-            throw new Error('staleRatio must be a finite number between 0 and 1');
-        }
+        if (typeof options.ttl !== 'function') validateTtl(options.ttl);
+        validateStaleAfter(options.staleAfter);
         this.ttl = options.ttl;
-        this.staleRatio = options.staleRatio;
+        this.staleAfter = options.staleAfter;
         this.onError = options.onError;
         const namespace = options.namespace ? `${options.namespace}:` : '';
-        this.prefix = options.namespace === false ? '' : `flashCache:v2:${namespace}`;
+        this.prefix = options.namespace === false ? '' : `flashCache:v3:${namespace}`;
     }
 
     getOrSet<Stored = unknown>(
@@ -70,7 +82,7 @@ export class FlashCache<T = unknown> {
     ): MayBePromise<CacheableValue<T>> {
         const { cloneValue } = options;
         const storedKey = this.prefix + key;
-        const local = this.primary.get(storedKey);
+        const local = this.primary.get(storedKey) as LocalStoreValue<T> | undefined;
         const time = Date.now();
         const hasUsableLocal = local !== undefined && local.value !== undefined && local.expAt > time;
 
@@ -109,7 +121,7 @@ export class FlashCache<T = unknown> {
     ): MayBePromise<CacheableValue<T> | undefined> {
         const { cloneValue } = options;
         const storedKey = this.prefix + key;
-        const local = this.primary.get(storedKey);
+        const local = this.primary.get(storedKey) as LocalStoreValue<T> | undefined;
         if (local && local.value !== undefined && local.expAt > Date.now()) {
             return this.toReader(local.value as CacheableValue<T>, cloneValue);
         }
@@ -118,13 +130,16 @@ export class FlashCache<T = unknown> {
         this.track(storedKey, publication);
         const accept = (entry: StoreValue<T> | undefined) => {
             const time = Date.now();
-            const current = publication.active ? this.primary.get(storedKey) : undefined;
+            const current = publication.active
+                ? (this.primary.get(storedKey) as LocalStoreValue<T> | undefined)
+                : undefined;
             if (current && current.value !== undefined && current.expAt > time && current.staleAt > time) {
                 return this.toReader(current.value as CacheableValue<T>, cloneValue);
             }
             if (!entry || entry.value === undefined || entry.expAt <= time) return undefined;
-            if (publication.active) this.primary.set(storedKey, entry);
-            return this.toReader(entry.value as CacheableValue<T>, cloneValue);
+            const local = this.toLocal(entry, options.staleAfter ?? this.staleAfter, current);
+            if (publication.active) this.primary.set(storedKey, local);
+            return this.toReader(local.value as CacheableValue<T>, cloneValue);
         };
         let pending = false;
         try {
@@ -146,17 +161,15 @@ export class FlashCache<T = unknown> {
     ): MayBePromise<void> {
         const storedKey = this.prefix + key;
         this.detach(storedKey);
-        const ttl = options.customTtl ?? this.ttl;
-        if (!Number.isInteger(ttl) || ttl <= 0) throw new Error('customTtl must be a positive integer in milliseconds');
-        const staleRatio = options.customStaleRatio ?? this.staleRatio;
-        if (!Number.isFinite(staleRatio) || staleRatio < 0 || staleRatio > 1) {
-            throw new Error('customStaleRatio must be a finite number between 0 and 1');
-        }
+        const ttl = options.ttl ?? this.ttl;
+        if (typeof ttl !== 'function') validateTtl(ttl);
+        const staleAfter = options.staleAfter ?? this.staleAfter;
+        validateStaleAfter(staleAfter);
         if (value === undefined) throw new Error('undefined values cannot be cached');
         const publication = { active: true };
         this.track(storedKey, publication);
         try {
-            return this.publish(key, storedKey, value, ttl, staleRatio, options.codec, publication);
+            return this.publish(key, storedKey, value, ttl, staleAfter, options.codec, publication);
         } finally {
             // После запуска записи L2 её уже нельзя отменить; защита нужна только до отправки.
             this.release(storedKey, publication);
@@ -213,16 +226,18 @@ export class FlashCache<T = unknown> {
 
         const acceptSecondary = (entry: StoreValue<T> | undefined): MayBePromise<CacheableValue<T>> => {
             // Ответ из кеша не ждёт обновления; промах ждёт completed напрямую.
-            let response: StoreValue<T> | undefined;
+            let response: LocalStoreValue<T> | undefined;
             let completion: MayBePromise<CacheableValue<T>>;
             try {
                 const time = Date.now();
-                const current = flight.active ? this.primary.get(storedKey) : undefined;
+                const current = flight.active
+                    ? (this.primary.get(storedKey) as LocalStoreValue<T> | undefined)
+                    : undefined;
                 if (current && current.value !== undefined && current.expAt > time && current.staleAt > time) {
                     response = current;
                 } else if (entry && entry.value !== undefined && entry.expAt > time) {
-                    if (flight.active) this.primary.set(storedKey, entry);
-                    response = entry;
+                    response = this.toLocal(entry, options.staleAfter ?? this.staleAfter, current);
+                    if (flight.active) this.primary.set(storedKey, response);
                 }
                 resolveCached(response);
                 if (response && response.staleAt > time) {
@@ -260,17 +275,15 @@ export class FlashCache<T = unknown> {
         options: SetOptions<T, Stored>,
         publication: Publication,
     ): MayBePromise<CacheableValue<T>> {
-        const ttl = options.customTtl ?? this.ttl;
-        if (!Number.isInteger(ttl) || ttl <= 0) throw new Error('customTtl must be a positive integer in milliseconds');
-        const staleRatio = options.customStaleRatio ?? this.staleRatio;
-        if (!Number.isFinite(staleRatio) || staleRatio < 0 || staleRatio > 1) {
-            throw new Error('customStaleRatio must be a finite number between 0 and 1');
-        }
+        const ttl = options.ttl ?? this.ttl;
+        if (typeof ttl !== 'function') validateTtl(ttl);
+        const staleAfter = options.staleAfter ?? this.staleAfter;
+        validateStaleAfter(staleAfter);
         const loaded = factory();
         const persist = (value: CacheableValue<T>): MayBePromise<CacheableValue<T>> => {
             if (value === undefined) throw new Error('undefined values cannot be cached');
             if (!publication.active) return value;
-            const written = this.publish(key, storedKey, value, ttl, staleRatio, options.codec, publication);
+            const written = this.publish(key, storedKey, value, ttl, staleAfter, options.codec, publication);
             return written instanceof Promise ? written.then(() => value) : value;
         };
         return loaded instanceof Promise ? loaded.then(persist) : persist(loaded);
@@ -280,14 +293,19 @@ export class FlashCache<T = unknown> {
         key: string,
         storedKey: string,
         value: CacheableValue<T>,
-        ttl: number,
-        staleRatio: number,
+        ttl: Ttl,
+        staleAfter: StaleAfter,
         codec: Codec<T, Stored> | undefined,
         publication?: Publication,
     ): MayBePromise<void> {
+        const duration = typeof ttl === 'function' ? ttl() : ttl;
+        validateTtl(duration);
+        if (publication && !publication.active) return;
         const time = Date.now();
-        const entry = { value, time, staleAt: time + ttl * staleRatio, expAt: time + ttl };
-        this.primary.set(storedKey, entry);
+        const entry = { value, time, expAt: time + duration };
+        const local = this.toLocal(entry, staleAfter);
+        if (publication && !publication.active) return;
+        this.primary.set(storedKey, local);
         if (publication && !publication.active) return;
         try {
             const stored = codec ? { ...entry, value: codec.serialize(value) } : entry;
@@ -333,6 +351,21 @@ export class FlashCache<T = unknown> {
             this.report(error, key, 'l2.get');
             return undefined;
         }
+    }
+
+    private toLocal(entry: StoreValue<T>, staleAfter: StaleAfter, current?: LocalStoreValue<T>): LocalStoreValue<T> {
+        // Re-reading the same snapshot must not roll another deadline or postpone refresh.
+        if (current && current.time === entry.time && current.expAt === entry.expAt) return current;
+        const delay = typeof staleAfter === 'function' ? staleAfter(entry.expAt - entry.time) : staleAfter;
+        if (!Number.isSafeInteger(delay) || delay < 0) {
+            throw new Error('staleAfter must produce a non-negative integer in milliseconds');
+        }
+        return {
+            value: entry.value,
+            time: entry.time,
+            expAt: entry.expAt,
+            staleAt: Math.min(entry.time + delay, entry.expAt),
+        };
     }
 
     private toReader(value: CacheableValue<T>, cloneValue: GetOptions<T>['cloneValue']): CacheableValue<T> {
